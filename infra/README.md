@@ -100,6 +100,17 @@ OIDC), map the IdP's email and name, and map an IdP group claim to the
 `admin` / `analyst` / `viewer`. Then add the provider to the app client's
 identity providers. (This will move into the stack once the IdP is chosen.)
 
+## Background training
+
+Jobs go to the `Jobs` SQS queue (encrypted; a dead-letter queue catches
+messages that fail five times and raises the `JobsDeadLetter` alarm). The
+`Worker` service runs `python -m worker.trainer` at 4 vCPU / 16 GB and
+scales from **0** to `maxWorkers` (4) on queued + in-flight jobs, so it
+costs nothing while idle; the first job after a quiet spell waits a minute
+or two for a worker to start. A worker running a job holds ECS scale-in
+protection, so neither scaling in nor a deploy stops it mid-run. Logs: the
+`worker/` prefix in the log group.
+
 ## Alerts
 
 Two SNS topics (stack outputs): **ModelAlertsTopic** for monitoring alerts

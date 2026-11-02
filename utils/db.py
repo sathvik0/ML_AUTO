@@ -306,6 +306,35 @@ class MonitorRun(Base):
         DateTime(timezone=True), nullable=True)
 
 
+class Job(Base):
+    """Background work (training today): queued in the web app, run by a
+    worker, watched and cancelled from the page."""
+    __tablename__ = "jobs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))           # train
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    progress_text: Mapped[str] = mapped_column(String(300), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    worker: Mapped[str] = mapped_column(String(100), default="")
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
+
 def engine(database_url=None):
     return _engine(database_url or url())
 

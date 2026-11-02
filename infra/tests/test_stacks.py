@@ -232,12 +232,59 @@ def test_only_web_and_batch_publish_alerts(stacks):
 
 def test_platform_alarms_notify_ops(stacks):
     web, _ = stacks
+    # The platform alarms (autoscaling adds its own, which act on scaling
+    # policies rather than notify anyone).
     alarms = [r["Properties"] for r in web.to_json()["Resources"].values()
-              if r["Type"] == "AWS::CloudWatch::Alarm"]
-    assert len(alarms) == 5
+              if r["Type"] == "AWS::CloudWatch::Alarm"
+              and str(r["Properties"].get("AlarmDescription", ""))
+              .startswith("ML Automation:")]
+    assert len(alarms) == 6
     ops = next(k for k, r in web.to_json()["Resources"].items()
                if r["Type"] == "AWS::SNS::Topic"
                and r["Properties"]["TopicName"] == "ml-auto-ops-alarms")
     for a in alarms:
         assert a["AlarmActions"] == [{"Ref": ops}]
         assert a["OKActions"] == [{"Ref": ops}]
+
+
+def test_jobs_queue_encrypted_with_dead_letters(stacks):
+    web, _ = stacks
+    queues = [r["Properties"] for r in web.to_json()["Resources"].values()
+              if r["Type"] == "AWS::SQS::Queue"]
+    assert len(queues) == 2
+    assert all(q.get("SqsManagedSseEnabled") for q in queues)
+    main = next(q for q in queues if "RedrivePolicy" in q)
+    assert main["RedrivePolicy"]["maxReceiveCount"] == 5
+
+
+def test_workers_scale_from_zero_on_queue_depth(stacks):
+    web, _ = stacks
+    c = _containers(web)
+    assert c["worker"]["Command"] == ["python", "-m", "worker.trainer"]
+    res = web.to_json()["Resources"]
+    worker = next(r["Properties"] for k, r in res.items()
+                  if r["Type"] == "AWS::ECS::Service"
+                  and k.startswith("Worker"))
+    assert worker["DesiredCount"] == 0
+    web.has_resource_properties("AWS::ApplicationAutoScaling::ScalableTarget",
+                                {"MinCapacity": 0, "MaxCapacity": 4})
+    web.has_resource_properties("AWS::ApplicationAutoScaling::ScalingPolicy",
+                                {"PolicyType": "StepScaling"})
+    alarms = [r["Properties"] for r in res.values()
+              if r["Type"] == "AWS::CloudWatch::Alarm"
+              and any(m.get("Expression") == "visible + inflight"
+                      for m in r["Properties"].get("Metrics", []))]
+    assert alarms, "the scaling alarms read queued + in-flight jobs"
+
+
+def test_worker_may_protect_its_task(stacks):
+    web, _ = stacks
+    assert "ecs:UpdateTaskProtection" in _policy_actions(web,
+                                                         "WorkerTaskTaskRole")
+
+
+def test_web_sends_jobs_but_does_not_consume(stacks):
+    web, _ = stacks
+    acts = _policy_actions(web, "WebTaskTaskRole")
+    assert "sqs:SendMessage" in acts and "sqs:ReceiveMessage" not in acts
+    assert "sqs:ReceiveMessage" in _policy_actions(web, "WorkerTaskTaskRole")

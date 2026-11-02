@@ -450,6 +450,8 @@ def render():
         return
     st.markdown(f"## {p['name']}")
     st.caption(f"Project · your role: {p['role']} · owner {p['owner']}")
+    from components import jobs_panel
+    guard.section("Training jobs", jobs_panel.project_section, p, user)
     guard.section("Runs", _runs, p, user)
     st.divider()
     guard.section("Registered models", _models, p, user)
