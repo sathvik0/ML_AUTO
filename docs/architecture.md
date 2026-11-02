@@ -94,7 +94,7 @@ token the ALB forwards.
 | # | Item | Delivers |
 | --- | --- | --- |
 | 1 | SSO and roles | Container image, CDK stack (VPC, ECS, ALB, Cognito, WAF, secrets, logout), app-side identity and permissions. |
-| 2 | Persistence | Aurora + S3: projects, saved runs, model registry, per-project sharing. |
+| 2 | Persistence | Aurora PostgreSQL Serverless v2 (scales to zero, encrypted, 7-day backups) and a KMS-encrypted, versioned S3 bucket: projects, autosaved datasets/steps/choices/runs, a model registry with versions, per-project sharing (owner/editor/viewer). Schema managed by Alembic. |
 | 3 | Deployment | Model API service behind `/api`, batch scoring on a schedule, model versions with approval. |
 | 4 | Monitoring | Scheduled drift and performance checks, alerts through SNS, retraining triggers. |
 | 5 | Scale | SQS + worker for training and scoring; progress, cancel, resume. |

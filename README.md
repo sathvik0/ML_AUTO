@@ -121,6 +121,23 @@ signed headers itself and reads the user's role from their Cognito groups:
 Locally the app runs with `AUTH_MODE=dev` (the default): a development user,
 with a **View as** switcher in the account menu to see each role's view.
 
+## Projects
+
+Work is saved in **projects**. Create one on the start page (or save the
+current work from the 📁 chip at the top), and while it is open everything
+saves itself: the loaded dataset, the preparation steps, the configure
+choices and every training run. The project page lists the runs (open any
+of them on the results page again) and the **model registry** — register a
+model from the results page and each registration becomes a new numbered
+version you can download. Owners share a project by email as viewer, editor
+or owner; what a person may do is the lower of their project role and their
+sign-in role.
+
+Locally, projects live in `data/app.db` (SQLite) and files in
+`data/objects`; on AWS in Aurora PostgreSQL and S3 (`DATABASE_URL` or
+`DB_HOST`…, and `STORAGE_BUCKET`, set by the stack). The schema is managed
+with Alembic (`migrations/`) and migrated when the app starts.
+
 ## Deploying to AWS
 
 See [docs/architecture.md](docs/architecture.md) for the design and
