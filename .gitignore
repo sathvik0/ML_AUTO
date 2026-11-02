@@ -1,0 +1,21 @@
+# Secrets — never commit. Copy .streamlit/secrets.toml.example instead.
+.streamlit/secrets.toml
+.env
+*.pem
+*.p8
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local tooling
+.claude/
+.vscode/
+.idea/
+
+# Infrastructure build output
+infra/cdk.out/
+infra/.venv/

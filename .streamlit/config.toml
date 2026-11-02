@@ -1,0 +1,22 @@
+[theme]
+base = "light"
+primaryColor = "#534AB7"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# An uncaught error shows its type and a generic message in the browser, never
+# a traceback with server file paths. A dashboard section that fails shows a
+# reference instead, with the traceback in the log under it (utils/guard.py).
+# For full tracebacks while developing: STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=full
+showErrorDetails = "type"
+
+[server]
+# Real extracts run to 300k+ rows; the 200 MB default rejected them outright.
+maxUploadSize = 600
+# Governs data sent TO the browser, which is a different limit from the upload
+# cap. Raised as a safety net only — a section that genuinely needs hundreds of
+# MB would freeze the browser anyway, so the real defence is the cardinality
+# guards in schema.groupable_categoricals and the server-side binning.
+maxMessageSize = 600

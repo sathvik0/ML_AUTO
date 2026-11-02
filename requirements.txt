@@ -1,0 +1,22 @@
+streamlit>=1.39.0
+pandas>=2.0.0
+numpy>=1.26
+plotly>=5.20.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+pyarrow>=7.0.0          # fast read_csv engine (already required by streamlit)
+python-calamine>=0.2    # fast read_excel engine; falls back to openpyxl
+python-pptx>=0.6.23     # PowerPoint summary of a run
+matplotlib>=3.7.0       # charts in that summary
+scikit-learn>=1.7       # 1.7: partial dependence takes custom values
+joblib>=1.6             # model upload: 1.6 reads a nested pickle through the guarded unpickler
+shap>=0.46              # SHAP explanations on the results page; hidden without it
+# XGBoost: the CPU-only wheel is 5.6 MB against 132 MB for the CUDA one, and
+# it ships for Linux and Windows only, so macOS takes the ordinary package.
+xgboost-cpu>=2.1; platform_system != "Darwin"
+xgboost>=2.1; platform_system == "Darwin"
+lightgbm>=4.3           # links the OpenMP runtime: libgomp1 on Debian/Ubuntu
+anthropic>=1.0          # Feature engineering: AI-written column scripts
+streamlit-ace>=0.1.1    # Feature engineering: script editor
+openai>=1.0             # optional: voice input on Feature engineering
+snowflake-connector-python[pandas]>=3.7  # optional: Snowflake load and write-back
