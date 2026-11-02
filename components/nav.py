@@ -4,7 +4,7 @@ cannot be opened yet greyed out. It replaces the per-page navigation
 buttons."""
 import streamlit as st
 
-from utils import scroll
+from utils import auth, scroll
 
 # (page, label). "start" is the start page (no page set).
 STEPS = (("start", "Data"), ("ml_eda", "Explore & prepare"),
@@ -48,7 +48,7 @@ def _available(page):
         return "ml_run" in ss
     if page == "ml_upload":
         from components import ml_config
-        return ml_config.upload_allowed()
+        return ml_config.upload_allowed() and auth.can("own_model")
     return True
 
 
@@ -66,6 +66,9 @@ def _go(page):
 def render(current):
     """Draw the bar with `current` highlighted ("start" on the start page)."""
     st.markdown(_CSS, unsafe_allow_html=True)
+    _, account = st.columns([5, 1.4])
+    with account:
+        auth.account_menu()
     order = [p for p, _ in STEPS]
     # The branch sits where training would; drift needs only the file.
     at = (order.index(current) if current in order else
@@ -87,7 +90,9 @@ def render(current):
             here = page == current
             help_ = ("Start over with another file: this file, its steps "
                      "and any trained models are cleared."
-                     if page == "start" and current != "start" else None)
+                     if page == "start" and current != "start" else
+                     auth.why_not("own_model") if page == "ml_upload"
+                     else None)
             if col.button(text, key=f"ml_nav_{page}", width="stretch",
                           type="primary" if here else "secondary",
                           disabled=not here and not _available(page),

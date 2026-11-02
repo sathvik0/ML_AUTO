@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from logic import snowflake_io as sf
+from utils import auth
 
 CONN = "sf_conn"          # the live connection
 IDENT = "sf_identity"     # who Snowflake says we are
@@ -68,6 +69,8 @@ def _connect(params):
 
 def connection_form(key_prefix):
     """Render the connection state, or the form that opens one."""
+    if auth.denied("snowflake"):
+        return False
     if not sf.available():
         st.info(sf.unavailable_reason())
         return False

@@ -1,0 +1,39 @@
+name: Deploy
+
+# Manual for now: run it from the Actions tab once the AWS account is set up
+# (infra/README.md). Credentials come from OIDC — no AWS keys are stored.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: pip install -r infra/requirements.txt
+      - name: Deploy the web tier
+        working-directory: infra
+        run: |
+          npx --yes aws-cdk@2 deploy MlAutoWeb --require-approval never \
+            -c domainName=${{ vars.DOMAIN_NAME }} \
+            -c hostedZoneName=${{ vars.HOSTED_ZONE_NAME }} \
+            -c cognitoDomain=${{ vars.COGNITO_DOMAIN }}

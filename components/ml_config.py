@@ -18,7 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from logic import ml, ml_eval, ml_recipe
-from utils import guard, log, scroll
+from utils import auth, guard, log, scroll
 
 _log = log.get("ml_config")
 
@@ -669,8 +669,9 @@ def render():
     if not errors:
         _plan_line(config, len(df))
         _code(df, config)
-    go = st.button("Train models", type="primary", disabled=bool(errors),
-                   key="ml_train")
+    go = st.button("Train models", type="primary",
+                   disabled=bool(errors) or not auth.can("train"),
+                   help=auth.why_not("train"), key="ml_train")
     _save()
     if go:
         guard.action("Training", "The models could not be trained.", _train,

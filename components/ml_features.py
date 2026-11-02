@@ -19,7 +19,7 @@ from streamlit_ace import st_ace
 
 from components import input_keys, ml_eda, voice_input
 from logic import derive, ml, ml_prep, schema
-from utils import guard, log, scroll, secrets
+from utils import auth, guard, log, scroll, secrets
 from utils.constants import ML_PALETTE
 from utils.frames import centre_numbers
 
@@ -296,7 +296,10 @@ def render():
                "added to your dataset until you confirm. Added columns are "
                "rebuilt in every exported script.")
 
-    key = secrets.resolve("ANTHROPIC_API_KEY")
+    if auth.denied("edit"):
+        return
+    # Without the AI permission the page still works by hand.
+    key = secrets.resolve("ANTHROPIC_API_KEY") if auth.can("ai") else None
     guard.section("AI feature ideas", _ideas, df, key)
 
     # ── prompt ──────────────────────────────────────────────────────────

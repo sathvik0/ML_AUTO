@@ -1,0 +1,11 @@
+{
+  "app": "python app.py",
+  "context": {
+    "githubRepo": "sathvik0/ML_AUTO",
+    "natGateways": 1,
+    "interfaceEndpoints": false,
+    "minTasks": 1,
+    "maxTasks": 4,
+    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": false
+  }
+}

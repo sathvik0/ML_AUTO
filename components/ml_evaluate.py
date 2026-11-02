@@ -15,7 +15,7 @@ import streamlit as st
 
 from components import ml_config, snowflake_panel
 from logic import ml, ml_prep, ml_recipe, ml_upload
-from utils import guard, log, scroll
+from utils import auth, guard, log, scroll
 from utils.file_loader import load_file
 
 _log = log.get("ml_evaluate")
@@ -181,6 +181,8 @@ def render():
     ss = st.session_state
     df = ss["ml_df"]
     _header(df)
+    if auth.denied("own_model"):
+        return
     if not ml_config.upload_allowed():
         st.info("Model upload is turned off on this deployment "
                 "(ML_MODEL_UPLOAD=off).")

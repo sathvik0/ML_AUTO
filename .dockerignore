@@ -1,0 +1,23 @@
+# Never bake credentials into an image: production reads them from the
+# environment (Secrets Manager → ECS task secrets).
+.streamlit/secrets.toml
+.env
+
+.git
+.gitignore
+.gitattributes
+.claude
+**/__pycache__
+*.py[cod]
+.venv
+venv
+.vscode
+.idea
+.pytest_cache
+
+# Not part of the running app
+infra/
+docs/
+tests/
+.github/
+Dockerfile
