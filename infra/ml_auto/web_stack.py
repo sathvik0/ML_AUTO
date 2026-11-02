@@ -19,6 +19,7 @@ from pathlib import Path
 from aws_cdk import (CfnOutput, Duration, RemovalPolicy, Stack, aws_certificatemanager as acm,
                      aws_cognito as cognito, aws_ec2 as ec2, aws_ecr_assets as ecr_assets,
                      aws_ecs as ecs, aws_elasticloadbalancingv2 as elbv2,
+                     aws_events as events, aws_events_targets as events_targets,
                      aws_elasticloadbalancingv2_actions as elb_actions,
                      aws_elasticloadbalancingv2_targets as elb_targets, aws_kms as kms,
                      aws_lambda as lambda_, aws_logs as logs, aws_rds as rds,
@@ -30,6 +31,7 @@ from constructs import Construct
 APP_DIR = Path(__file__).resolve().parents[2]
 ROLES = ("admin", "analyst", "viewer")
 PORT = 8501
+API_PORT = 8000
 
 
 class WebStack(Stack):
@@ -183,6 +185,16 @@ class WebStack(Stack):
         image = ecr_assets.DockerImageAsset(
             self, "WebImage", directory=str(APP_DIR),
             platform=ecr_assets.Platform.LINUX_AMD64)
+        # What every service reading projects needs: storage and the
+        # database (credentials from the cluster's own secret, by field).
+        data_env = {"AWS_REGION": self.region,
+                    "STORAGE_BUCKET": data_bucket.bucket_name}
+        db_secrets = {
+            env: ecs.Secret.from_secrets_manager(database.secret, field)
+            for env, field in (("DB_HOST", "host"), ("DB_PORT", "port"),
+                               ("DB_USER", "username"),
+                               ("DB_PASSWORD", "password"),
+                               ("DB_NAME", "dbname"))}
         task.add_container(
             "web", image=ecs.ContainerImage.from_docker_image_asset(image),
             port_mappings=[ecs.PortMapping(container_port=PORT)],
@@ -190,28 +202,21 @@ class WebStack(Stack):
                                             log_group=log_group),
             stop_timeout=Duration.seconds(120),
             environment={
+                **data_env,
                 "AUTH_MODE": "alb",
-                "AWS_REGION": self.region,
                 "ALB_ARN": alb.load_balancer_arn,
                 "COGNITO_USER_POOL_ID": pool.user_pool_id,
                 "COGNITO_CLIENT_ID": client.user_pool_client_id,
                 "SIGN_OUT_URL": f"{base_url}/logout",
+                "APP_URL": base_url,
                 "DEFAULT_ROLE": "viewer",
-                "STORAGE_BUCKET": data_bucket.bucket_name,
             },
             secrets={
                 "ANTHROPIC_API_KEY": ecs.Secret.from_secrets_manager(
                     app_keys, "ANTHROPIC_API_KEY"),
                 "OPENAI_API_KEY": ecs.Secret.from_secrets_manager(
                     app_keys, "OPENAI_API_KEY"),
-                # The cluster's own generated secret, field by field.
-                **{env: ecs.Secret.from_secrets_manager(database.secret,
-                                                        field)
-                   for env, field in (("DB_HOST", "host"),
-                                      ("DB_PORT", "port"),
-                                      ("DB_USER", "username"),
-                                      ("DB_PASSWORD", "password"),
-                                      ("DB_NAME", "dbname"))},
+                **db_secrets,
             },
             health_check=ecs.HealthCheck(
                 command=["CMD-SHELL",
@@ -251,6 +256,97 @@ class WebStack(Stack):
             scale_in_cooldown=Duration.minutes(30),
             scale_out_cooldown=Duration.minutes(2))
 
+        # ── the model API: same image, its own service on /api/* ────────
+        api_task = ecs.FargateTaskDefinition(
+            self, "ApiTask", cpu=1024, memory_limit_mib=2048,
+            runtime_platform=ecs.RuntimePlatform(
+                cpu_architecture=ecs.CpuArchitecture.X86_64,
+                operating_system_family=ecs.OperatingSystemFamily.LINUX))
+        api_task.add_container(
+            "api", image=ecs.ContainerImage.from_docker_image_asset(image),
+            command=["uvicorn", "api.main:app", "--host", "0.0.0.0",
+                     "--port", str(API_PORT), "--proxy-headers",
+                     "--forwarded-allow-ips", "*"],
+            port_mappings=[ecs.PortMapping(container_port=API_PORT)],
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="api",
+                                            log_group=log_group),
+            environment=data_env, secrets=db_secrets,
+            health_check=ecs.HealthCheck(
+                command=["CMD-SHELL",
+                         f"curl -fsS http://localhost:{API_PORT}/api/health"
+                         " || exit 1"],
+                interval=Duration.seconds(30), timeout=Duration.seconds(5),
+                start_period=Duration.seconds(30), retries=3))
+        api_service = ecs.FargateService(
+            self, "Api", cluster=cluster, task_definition=api_task,
+            desired_count=1, min_healthy_percent=100,
+            max_healthy_percent=200,
+            health_check_grace_period=Duration.seconds(60),
+            circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
+            vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS))
+        data_bucket.grant_read(api_task.task_role)
+        database.connections.allow_default_port_from(
+            api_service, "the model API")
+        api_target = elbv2.ApplicationTargetGroup(
+            self, "ApiTargets", vpc=vpc, port=API_PORT,
+            protocol=elbv2.ApplicationProtocol.HTTP,
+            targets=[api_service.load_balancer_target(
+                container_name="api", container_port=API_PORT)],
+            health_check=elbv2.HealthCheck(path="/api/health",
+                                           healthy_http_codes="200"),
+            deregistration_delay=Duration.seconds(30))
+        api_scaling = api_service.auto_scale_task_count(
+            min_capacity=1, max_capacity=int(ctx("maxApiTasks") or 6))
+        api_scaling.scale_on_cpu_utilization(
+            "Cpu", target_utilization_percent=60,
+            scale_out_cooldown=Duration.minutes(1))
+
+        # ── batch scoring: a scheduled task every 15 minutes ────────────
+        # The deployment's own Snowflake account, for batch jobs only — it
+        # must never pre-fill the web app's form with a service password.
+        snowflake_service = secretsmanager.Secret(
+            self, "SnowflakeService",
+            secret_name="ml-auto/snowflake-service",
+            description="Snowflake account batch jobs read and write with. "
+                        "Set the values after deploying.",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template=(
+                    '{"account": "", "user": "", "role": "", '
+                    '"warehouse": "", "database": "", "schema": ""}'),
+                generate_string_key="password"))
+        batch_task = ecs.FargateTaskDefinition(
+            self, "BatchTask", cpu=2048, memory_limit_mib=8192,
+            runtime_platform=ecs.RuntimePlatform(
+                cpu_architecture=ecs.CpuArchitecture.X86_64,
+                operating_system_family=ecs.OperatingSystemFamily.LINUX))
+        batch_task.add_container(
+            "batch", image=ecs.ContainerImage.from_docker_image_asset(image),
+            command=["python", "-m", "worker.batch", "--due"],
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="batch",
+                                            log_group=log_group),
+            environment=data_env,
+            secrets={**db_secrets, **{
+                f"SNOWFLAKE_{field.upper()}": ecs.Secret
+                .from_secrets_manager(snowflake_service, field)
+                for field in ("account", "user", "password", "role",
+                              "warehouse", "database", "schema")}})
+        data_bucket.grant_read_write(batch_task.task_role)
+        batch_sg = ec2.SecurityGroup(self, "BatchSg", vpc=vpc,
+                                     description="ML Automation batch jobs")
+        database.connections.allow_default_port_from(batch_sg,
+                                                     "batch jobs")
+        events.Rule(
+            self, "BatchSchedule",
+            description="Run due ML Automation batch jobs",
+            schedule=events.Schedule.rate(Duration.minutes(15)),
+            targets=[events_targets.EcsTask(
+                cluster=cluster, task_definition=batch_task,
+                launch_type=ecs.LaunchType.FARGATE,
+                subnet_selection=ec2.SubnetSelection(
+                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+                security_groups=[batch_sg])])
+
         # ── sign-out: only the load balancer can clear its own cookie ────
         logout = lambda_.Function(
             self, "Logout", runtime=lambda_.Runtime.PYTHON_3_12,
@@ -282,6 +378,11 @@ class WebStack(Stack):
             "SignOut", priority=1,
             conditions=[elbv2.ListenerCondition.path_patterns(["/logout"])],
             action=elbv2.ListenerAction.forward([logout_targets]))
+        # Machines call the API with project keys; no browser sign-in.
+        https.add_action(
+            "ModelApi", priority=2,
+            conditions=[elbv2.ListenerCondition.path_patterns(["/api/*"])],
+            action=elbv2.ListenerAction.forward([api_target]))
 
         # ── WAF ──────────────────────────────────────────────────────────
         def managed(name, priority, overrides=()):

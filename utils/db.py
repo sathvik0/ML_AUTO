@@ -168,6 +168,95 @@ class ModelVersion(Base):
                                                  default=now)
 
 
+class Transition(Base):
+    """A request to move a model version to a stage. Production needs a
+    second person's approval; the log of decisions is kept."""
+    __tablename__ = "model_transitions"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="CASCADE"), index=True)
+    to_stage: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16))  # pending/approved/...
+    comment: Mapped[str] = mapped_column(Text, default="")
+    requested_by: Mapped[str] = mapped_column(String(320))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                   default=now)
+    decided_by: Mapped[str | None] = mapped_column(String(320),
+                                                   nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str] = mapped_column(Text, default="")
+
+
+class ApiKey(Base):
+    """A project's key for the model API. Only a hash is stored; the key
+    itself is shown once, when it is made."""
+    __tablename__ = "api_keys"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    prefix: Mapped[str] = mapped_column(String(16))
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
+
+class BatchJob(Base):
+    """Scheduled scoring: a registered model's production (or staging)
+    version applied to a source, written to a destination."""
+    __tablename__ = "batch_jobs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    model_name: Mapped[str] = mapped_column(String(200))
+    stage: Mapped[str] = mapped_column(String(16), default="production")
+    source: Mapped[dict] = mapped_column(JSON)
+    destination: Mapped[dict] = mapped_column(JSON)
+    schedule: Mapped[str] = mapped_column(String(100), default="")  # cron
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str] = mapped_column(String(16), default="")
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+
+
+class BatchRun(Base):
+    __tablename__ = "batch_runs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("batch_jobs.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(16))  # running/succeeded/...
+    triggered_by: Mapped[str] = mapped_column(String(320))
+    model_version_id: Mapped[str | None] = mapped_column(String(32),
+                                                         nullable=True)
+    rows: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_key: Mapped[str] = mapped_column(String(500), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
+
 def engine(database_url=None):
     return _engine(database_url or url())
 

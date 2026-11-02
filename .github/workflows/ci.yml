@@ -17,9 +17,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt pytest pyflakes
+      - run: pip install -r requirements.txt pytest pyflakes httpx
       - name: Lint
-        run: python -m pyflakes app.py components logic utils tools tests
+        run: python -m pyflakes app.py api worker components logic utils tools tests migrations
       - name: Tests
         run: python -m pytest -q tests
 
