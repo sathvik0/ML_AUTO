@@ -170,7 +170,8 @@ def _checked_script(code, df):
         raise StepError(f"Column script: {e}") from None
 
 
-_column_script = _checked_script  # noqa: F811  (replaces the plain runner)
+# Replaces the plain runner above for every step run in the app.
+globals()["_column_script"] = _checked_script
 
 
 def is_row_step(step):
