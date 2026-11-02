@@ -453,6 +453,12 @@ def render():
     guard.section("Runs", _runs, p, user)
     st.divider()
     guard.section("Registered models", _models, p, user)
+    from components import deploy_panel
+    guard.section("Stages and approvals", deploy_panel.stages, p, user)
+    st.divider()
+    guard.section("Batch scoring", deploy_panel.batch, p, user)
+    st.divider()
+    guard.section("Model API", deploy_panel.api_keys, p, user)
     st.divider()
     guard.section("Members", _members, p, user)
     guard.section("Settings", _settings, p, user)

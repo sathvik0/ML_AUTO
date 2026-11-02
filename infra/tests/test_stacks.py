@@ -139,3 +139,59 @@ def test_only_the_app_reaches_the_database(stacks):
                and r["Properties"].get("Description") == "the web service"]
     assert ingress and all("SourceSecurityGroupId" in i for i in ingress)
     assert not any(i.get("CidrIp") for i in ingress)
+
+
+def _containers(web):
+    return {c["Name"]: c for r in web.to_json()["Resources"].values()
+            if r["Type"] == "AWS::ECS::TaskDefinition"
+            for c in r["Properties"]["ContainerDefinitions"]}
+
+
+def test_api_path_skips_browser_sign_in(stacks):
+    web, _ = stacks
+    rules = [r["Properties"] for r in web.to_json()["Resources"].values()
+             if r["Type"] == "AWS::ElasticLoadBalancingV2::ListenerRule"]
+    api = next(r for r in rules if r["Conditions"][0]["PathPatternConfig"]
+               ["Values"] == ["/api/*"])
+    assert [a["Type"] for a in api["Actions"]] == ["forward"]
+    assert api["Priority"] == 2
+
+
+def test_api_and_batch_containers(stacks):
+    web, _ = stacks
+    c = _containers(web)
+    assert c["api"]["Command"][:2] == ["uvicorn", "api.main:app"]
+    assert c["batch"]["Command"] == ["python", "-m", "worker.batch", "--due"]
+    web.has_resource_properties("AWS::Events::Rule", {
+        "ScheduleExpression": "rate(15 minutes)",
+        "Targets": [Match.object_like({"EcsParameters": Match.object_like(
+            {"LaunchType": "FARGATE"})})]})
+
+
+def test_snowflake_service_account_only_in_batch(stacks):
+    web, _ = stacks
+    c = _containers(web)
+
+    def names(container):
+        return {s["Name"] for s in container.get("Secrets", [])} | {
+            e["Name"] for e in container.get("Environment", [])}
+    assert "SNOWFLAKE_PASSWORD" in names(c["batch"])
+    assert not any(n.startswith("SNOWFLAKE_") for n in names(c["web"]))
+    assert not any(n.startswith("SNOWFLAKE_") for n in names(c["api"]))
+
+
+def test_api_cannot_write_data(stacks):
+    web, _ = stacks
+    res = web.to_json()["Resources"]
+    api_role = next(k for k, r in res.items() if r["Type"] == "AWS::IAM::Role"
+                    and k.startswith("ApiTaskTaskRole"))
+    actions = set()
+    for r in res.values():
+        if r["Type"] == "AWS::IAM::Policy" and any(
+                ref.get("Ref") == api_role for ref in r["Properties"]["Roles"]):
+            for st_ in r["Properties"]["PolicyDocument"]["Statement"]:
+                a = st_["Action"]
+                actions |= set(a if isinstance(a, list) else [a])
+    assert any(a.startswith("s3:GetObject") for a in actions)
+    assert not any(a.startswith(("s3:PutObject", "s3:DeleteObject"))
+                   for a in actions)

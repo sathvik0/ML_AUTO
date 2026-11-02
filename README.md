@@ -138,6 +138,32 @@ Locally, projects live in `data/app.db` (SQLite) and files in
 `DB_HOST`…, and `STORAGE_BUCKET`, set by the stack). The schema is managed
 with Alembic (`migrations/`) and migrated when the app starts.
 
+## Putting models to work
+
+From a project's page:
+
+- **Stages and approvals** — move a registered version to *staging* (or back,
+  or *archive* it) directly; *production* needs a request and approval by a
+  project owner other than the requester. Approving archives the model's
+  previous production version. Every decision is kept in the stage history.
+- **Model API** — owners create API keys (shown once; only a hash is
+  stored). Other systems then call
+
+  ```bash
+  curl -X POST https://<host>/api/v1/models/<model>/predict \
+    -H "Authorization: Bearer mlk_..." -H "Content-Type: application/json" \
+    -d '{"rows": [{"Age": 41, "Region": "West"}]}'
+  ```
+
+  for the production version (`?stage=staging` or `?version=N` to choose),
+  up to 10,000 rows a call; reference docs at `/api/docs`. A key reaches its
+  own project's models only. Locally: `uvicorn api.main:app --port 8000`.
+- **Batch scoring** — jobs score the project's dataset, an uploaded file or
+  a Snowflake query with a model's production (or staging) version, and
+  write a downloadable file or a Snowflake table — on demand or on a
+  schedule. `python -m worker.batch --due` runs whatever is due (on AWS a
+  scheduled task runs it every 15 minutes).
+
 ## Deploying to AWS
 
 See [docs/architecture.md](docs/architecture.md) for the design and

@@ -52,6 +52,20 @@ aws ecs update-service --cluster <cluster> --service <service> --force-new-deplo
 
 The tasks read the secret at start, hence the redeploy.
 
+### Snowflake for batch jobs (optional)
+
+Scheduled jobs read and write Snowflake with the deployment's own service
+account (never a user's sign-in, and never shown in the app):
+
+```bash
+aws secretsmanager put-secret-value --secret-id ml-auto/snowflake-service \
+  --secret-string '{"account":"xy12345.us-east-1","user":"SVC_ML","password":"...",
+                    "role":"ML_BATCH","warehouse":"WH_XS","database":"ANALYTICS","schema":"ML"}'
+```
+
+Give that role read access to the source schemas and create/insert on the
+schema scores are written to — nothing more.
+
 ### Add the first admin
 
 Sign-up is invite-only. Cognito emails each new user a temporary password.
@@ -85,6 +99,14 @@ OIDC), map the IdP's email and name, and map an IdP group claim to the
 `custom:` attribute or use a pre-token-generation Lambda to place users in
 `admin` / `analyst` / `viewer`. Then add the provider to the app client's
 identity providers. (This will move into the stack once the IdP is chosen.)
+
+## The model API and batch jobs
+
+- `https://<host>/api/health` → `{"status":"ok"}` (no sign-in on `/api/*`;
+  callers use project API keys created on the project page).
+- `https://<host>/api/docs` — interactive reference.
+- Batch jobs run from the `BatchSchedule` rule every 15 minutes; their logs
+  are in the same log group under the `batch/` prefix.
 
 ## Checks after a deploy
 
