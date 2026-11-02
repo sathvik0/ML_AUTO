@@ -146,8 +146,9 @@ def api_keys(p, user):
 
 
 # ── batch scoring ───────────────────────────────────────────────────────
-def _schedule_input():
-    kind = st.selectbox("Schedule", list(SCHEDULES), key="dep_job_sched",
+def schedule_input(prefix):
+    """A cron string (empty for on demand) from friendly choices."""
+    kind = st.selectbox("Schedule", list(SCHEDULES), key=f"{prefix}_sched",
                         format_func=SCHEDULES.get)
     if kind == "manual":
         return ""
@@ -155,9 +156,48 @@ def _schedule_input():
         return "0 * * * *"
     if kind == "cron":
         return st.text_input("Cron (UTC)", value="0 6 * * *",
-                             key="dep_job_cron")
-    hour = st.slider("Hour (UTC)", 0, 23, 6, key="dep_job_hour")
+                             key=f"{prefix}_cron")
+    hour = st.slider("Hour (UTC)", 0, 23, 6, key=f"{prefix}_hour")
     return f"0 {hour} * * *" if kind == "daily" else f"0 {hour} * * 1"
+
+
+def source_input(p, user, prefix, label):
+    """(source spec or None, ready): the project's dataset, an uploaded
+    file (stored by `stored_source` on create) or a Snowflake query."""
+    kind = st.radio(label, ["dataset", "file", "snowflake"],
+                    horizontal=True, key=f"{prefix}_src",
+                    format_func={"dataset": "The project's dataset",
+                                 "file": "Upload a file",
+                                 "snowflake": "A Snowflake query"}.get)
+    if kind == "dataset":
+        ws = projects.workspace(user, p["id"])
+        if ws["dataset_id"]:
+            return {"type": "dataset", "dataset_id": ws["dataset_id"]}, True
+        st.caption("The project has no dataset yet.")
+        return None, False
+    if kind == "file":
+        up = st.file_uploader("File", type=["csv", "xlsx", "xls"],
+                              key=f"{prefix}_file")
+        if up is not None:
+            st.session_state[f"{prefix}_upload"] = up
+        return {"type": "file"}, up is not None
+    q = st.text_area("Query", key=f"{prefix}_query", height=90,
+                     placeholder="SELECT * FROM CUSTOMERS")
+    st.caption("Runs with the deployment's own Snowflake account (set by "
+               "an administrator), not your sign-in.")
+    return ({"type": "snowflake", "query": q.strip()}, True) if q.strip() \
+        else (None, False)
+
+
+def stored_source(p, user, prefix, source):
+    """The source to save: an uploaded file is stored with the project
+    first. None when the upload cannot be read."""
+    if source["type"] != "file":
+        return source
+    up = st.session_state.pop(f"{prefix}_upload")
+    df = load_file(up)
+    return None if df is None else deployment.save_input(user, p["id"], df,
+                                                         up.name)
 
 
 def _new_job(p, user, names):
@@ -168,32 +208,8 @@ def _new_job(p, user, names):
         model = c1.selectbox("Model", names, key="dep_job_model")
         stage = c2.selectbox("Version to use", ["production", "staging"],
                              key="dep_job_stage")
-        src_kind = st.radio("Rows to score", ["dataset", "file",
-                                              "snowflake"],
-                            horizontal=True, key="dep_job_src",
-                            format_func={"dataset": "The project's dataset",
-                                         "file": "Upload a file",
-                                         "snowflake": "A Snowflake query"}.get)
-        source = None
-        if src_kind == "dataset":
-            ws = projects.workspace(user, p["id"])
-            if ws["dataset_id"]:
-                source = {"type": "dataset", "dataset_id": ws["dataset_id"]}
-            else:
-                st.caption("The project has no dataset yet.")
-        elif src_kind == "file":
-            up = st.file_uploader("File to score", type=["csv", "xlsx",
-                                                         "xls"],
-                                  key="dep_job_file")
-            if up is not None:
-                st.session_state["dep_job_upload"] = up
-        else:
-            q = st.text_area("Query", key="dep_job_query", height=90,
-                             placeholder="SELECT * FROM CUSTOMERS")
-            if q.strip():
-                source = {"type": "snowflake", "query": q.strip()}
-            st.caption("Runs with the deployment's own Snowflake account "
-                       "(set by an administrator), not your sign-in.")
+        source, source_ready = source_input(p, user, "dep_job",
+                                            "Rows to score")
         dest_kind = st.radio("Write the scores to", ["storage", "snowflake"],
                              horizontal=True, key="dep_job_dest",
                              format_func={"storage": "A file here, to "
@@ -212,21 +228,16 @@ def _new_job(p, user, names):
                                                   value="ML_SCORES",
                                                   key="dep_job_table"),
                            "mode": "Replace table"}
-        schedule = _schedule_input()
-        ready = (name.strip() and model and
-                 (source or (src_kind == "file"
-                             and st.session_state.get("dep_job_upload")))
+        schedule = schedule_input("dep_job")
+        ready = (name.strip() and model and source_ready
                  and (dest_kind == "storage"
                       or all(destination.get(k) for k in
                              ("database", "schema", "table"))))
         if st.button("Create job", type="primary", key="dep_job_go",
                      disabled=not ready):
-            if src_kind == "file":
-                up = st.session_state.pop("dep_job_upload")
-                df = load_file(up)
-                if df is None:
-                    return
-                source = deployment.save_input(user, p["id"], df, up.name)
+            source = stored_source(p, user, "dep_job", source)
+            if source is None:
+                return
             deployment.create_job(user, p["id"], name=name,
                                   model_name=model, source=source,
                                   destination=destination,

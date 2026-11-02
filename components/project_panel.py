@@ -458,6 +458,9 @@ def render():
     st.divider()
     guard.section("Batch scoring", deploy_panel.batch, p, user)
     st.divider()
+    from components import monitor_panel
+    guard.section("Monitoring", monitor_panel.render, p, user)
+    st.divider()
     guard.section("Model API", deploy_panel.api_keys, p, user)
     st.divider()
     guard.section("Members", _members, p, user)

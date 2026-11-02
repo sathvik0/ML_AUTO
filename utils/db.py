@@ -257,6 +257,55 @@ class BatchRun(Base):
         DateTime(timezone=True), nullable=True)
 
 
+class Monitor(Base):
+    """A scheduled check of a model in production against newer data:
+    drift, and accuracy where the data has actual outcomes."""
+    __tablename__ = "monitors"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    model_name: Mapped[str] = mapped_column(String(200))
+    source: Mapped[dict] = mapped_column(JSON)       # as a batch job's
+    thresholds: Mapped[dict] = mapped_column(JSON)
+    alert_webhook: Mapped[str] = mapped_column(String(500), default="")
+    retrain: Mapped[str] = mapped_column(String(16), default="notify")
+    schedule: Mapped[str] = mapped_column(String(100), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str] = mapped_column(String(16), default="")
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+
+
+class MonitorRun(Base):
+    __tablename__ = "monitor_runs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    monitor_id: Mapped[str] = mapped_column(
+        ForeignKey("monitors.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(16))  # ok/warning/alert/...
+    triggered_by: Mapped[str] = mapped_column(String(320))
+    model_version_id: Mapped[str | None] = mapped_column(String(32),
+                                                         nullable=True)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    message: Mapped[str] = mapped_column(Text, default="")
+    alerted: Mapped[bool] = mapped_column(Boolean, default=False)
+    retrained_version_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
+
 def engine(database_url=None):
     return _engine(database_url or url())
 

@@ -1,17 +1,18 @@
-"""Batch scoring runner.
+"""Scheduled work: batch scoring jobs and model monitors.
 
-    python -m worker.batch --due        every job whose time has come
-    python -m worker.batch --job ID     one job, now
+    python -m worker.batch --due        every job and monitor that is due
+    python -m worker.batch --job ID     one batch job, now
+    python -m worker.batch --monitor ID one monitor check, now
 
-On AWS a scheduled ECS task runs `--due` every 15 minutes. Each job's
-result is recorded on its run (and shown on the project page); a failed job
-does not stop the others. Exits non-zero only when the runner itself cannot
+On AWS a scheduled ECS task runs `--due` every 15 minutes. Each result is
+recorded on its run (and shown on the project page); a failure does not
+stop the others. Exits non-zero only when the runner itself cannot
 work (no database).
 """
 import argparse
 import sys
 
-from logic import deployment
+from logic import deployment, monitoring
 from utils import db, log
 
 _log = log.get("batch")
@@ -22,6 +23,7 @@ def main(argv=None):
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--due", action="store_true")
     which.add_argument("--job")
+    which.add_argument("--monitor")
     args = parser.parse_args(argv)
     log.setup()
     try:
@@ -29,12 +31,17 @@ def main(argv=None):
     except Exception:
         log.event(_log, "batch_no_database", level=40, exc_info=True)
         return 1
-    results = (deployment.run_due() if args.due
-               else [deployment.run_job(args.job, triggered_by="manual")])
+    if args.due:
+        results = deployment.run_due() + monitoring.run_due()
+    elif args.job:
+        results = [deployment.run_job(args.job, triggered_by="manual")]
+    else:
+        results = [monitoring.run_monitor(args.monitor,
+                                          triggered_by="manual")]
     for r in results:
-        log.event(_log, "batch_job_ran", status=r["status"], rows=r["rows"])
+        log.event(_log, "scheduled_work_ran", status=r["status"])
     log.event(_log, "batch_done", jobs=len(results),
-              failed=sum(r["status"] != "succeeded" for r in results))
+              failed=sum(r["status"] == "failed" for r in results))
     return 0
 
 

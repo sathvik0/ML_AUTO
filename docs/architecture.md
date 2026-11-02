@@ -96,7 +96,7 @@ token the ALB forwards.
 | 1 | SSO and roles | Container image, CDK stack (VPC, ECS, ALB, Cognito, WAF, secrets, logout), app-side identity and permissions. |
 | 2 | Persistence | Aurora PostgreSQL Serverless v2 (scales to zero, encrypted, 7-day backups) and a KMS-encrypted, versioned S3 bucket: projects, autosaved datasets/steps/choices/runs, a model registry with versions, per-project sharing (owner/editor/viewer). Schema managed by Alembic. |
 | 3 | Deployment | Stages (none → staging → production → archived) with four-eyes approval for production; a FastAPI model API service on `/api/*` (project API keys, hashed; 1 vCPU / 2 GB, CPU autoscaling); batch scoring jobs (project dataset, upload or Snowflake → storage or Snowflake, cron schedules) run by a scheduled Fargate task every 15 minutes with its own Snowflake service account. |
-| 4 | Monitoring | Scheduled drift and performance checks, alerts through SNS, retraining triggers. |
+| 4 | Monitoring | Monitors check a production model against newer data on a schedule (run by the same 15-minute task): drift on its own features and, when outcomes are present, accuracy against its test score → ok / warning / alert. Alerts go to an SNS topic (email; Slack or Teams through AWS Chatbot) and an optional per-monitor Slack/Teams webhook (allow-listed hosts only). Optional retraining registers a **staging** version — production still needs approval — and never stacks more than one waiting. Platform alarms (5xx, unhealthy tasks, API latency) go to a separate ops topic. |
 | 5 | Scale | SQS + worker for training and scoring; progress, cancel, resume. |
 | 6 | Governance | Audit trail in Aurora, approvals, fairness checks. |
 
