@@ -105,6 +105,34 @@ out of version control), or set environment variables.
   role, warehouse, database, schema; password, key-pair or browser SSO on
   the form). Needs `snowflake-connector-python`.
 
+## Sign-in and roles
+
+In production the app sits behind an AWS load balancer that signs every user
+in with Amazon Cognito (single sign-on with Okta, Entra ID or Google
+Workspace through Cognito federation). The app verifies the load balancer's
+signed headers itself and reads the user's role from their Cognito groups:
+
+| Role | Can |
+| --- | --- |
+| viewer | load data, explore, run drift analysis, view results |
+| analyst | + change the data, feature engineering, train, AI features, use own models, Snowflake |
+| admin | + system administration (grows with later roadmap items) |
+
+Locally the app runs with `AUTH_MODE=dev` (the default): a development user,
+with a **View as** switcher in the account menu to see each role's view.
+
+## Deploying to AWS
+
+See [docs/architecture.md](docs/architecture.md) for the design and
+[infra/README.md](infra/README.md) for the runbook (AWS CDK, Python).
+
+## Tests
+
+```bash
+python -m pytest -q tests          # app
+python -m pytest -q infra/tests    # infrastructure (needs infra/requirements.txt)
+```
+
 ## Run
 
 ```bash

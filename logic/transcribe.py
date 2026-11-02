@@ -8,6 +8,7 @@ must degrade to a message beside the chat box, never break the assistant.
 Capture is `st.audio_input`, which is native to Streamlit — no custom component,
 no JS build, and it works through a corporate proxy like any other widget.
 """
+import importlib
 import io
 import logging
 
@@ -29,7 +30,7 @@ def resolve_api_key():
 
 def package_installed() -> bool:
     try:
-        import openai  # noqa: F401
+        importlib.import_module("openai")
         return True
     except ImportError:
         return False

@@ -25,7 +25,7 @@ import streamlit as st
 st.set_page_config(page_title="Machine Learning", layout="wide")
 
 from components import ml_unavailable, nav, snowflake_panel
-from utils import file_loader, frames, guard, scroll
+from utils import auth, file_loader, frames, guard, scroll
 from utils.file_loader import load_file
 
 _CSS_PATH = os.path.join(os.path.dirname(__file__), "assets", "style.css")
@@ -33,6 +33,11 @@ with open(_CSS_PATH, encoding="utf-8") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 ss = st.session_state
+
+# Nothing renders for a request the sign-in service did not vouch for.
+if auth.current_user() is None:
+    auth.render_signed_out()
+    st.stop()
 
 _LANDING_CSS = """
 <style>

@@ -20,3 +20,4 @@ anthropic>=1.0          # Feature engineering: AI-written column scripts
 streamlit-ace>=0.1.1    # Feature engineering: script editor
 openai>=1.0             # optional: voice input on Feature engineering
 snowflake-connector-python[pandas]>=3.7  # optional: Snowflake load and write-back
+PyJWT[crypto]>=2.8     # verifying Cognito access tokens (sign-in)

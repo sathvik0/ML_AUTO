@@ -19,3 +19,6 @@ venv/
 # Infrastructure build output
 infra/cdk.out/
 infra/.venv/
+
+# Local database and stored objects
+data/

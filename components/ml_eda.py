@@ -16,7 +16,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from logic import ml, ml_eval, ml_explore, ml_prep, ml_recipe
-from utils import guard, log, scroll
+from utils import auth, guard, log, scroll
 from utils.constants import ML_PALETTE
 
 _log = log.get("ml_eda")
@@ -460,6 +460,8 @@ def _steps_list(steps):
         return
     st.dataframe(_cached("steps", _steps_table, ss["ml_source"], steps),
                  hide_index=True, width="stretch")
+    if not auth.can("edit"):
+        return
     c1, c2, _ = st.columns([1, 1, 2])
     if c1.button("Undo the last step", width="stretch",
                  key="ml_e_undo"):
@@ -661,6 +663,8 @@ def _prepare(df, prof):
     steps = list(ss.get("ml_steps") or [])
     st.markdown("**Steps, in order**")
     _steps_list(steps)
+    if auth.denied("edit"):
+        return
     st.markdown("**Add a step**")
     if "ml_run" in ss:
         st.caption("A new step clears the trained models: they learned from "

@@ -16,6 +16,7 @@ forever, `normalize_columns` is offered first so the table lands with names a
 SQL user can type.
 """
 import functools
+import importlib
 import logging
 import re
 
@@ -118,7 +119,7 @@ WRITE_MODES = ("Create new table", "Replace table", "Append rows")
 # ── availability ────────────────────────────────────────────────────────
 def package_installed() -> bool:
     try:
-        import snowflake.connector  # noqa: F401
+        importlib.import_module("snowflake.connector")
         return True
     except ImportError:
         return False

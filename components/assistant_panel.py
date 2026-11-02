@@ -14,7 +14,7 @@ import streamlit as st
 
 from components import ml_config
 from logic import claude, ml, ml_assistant, ml_recipe
-from utils import log, secrets
+from utils import auth, log, secrets
 
 _log = log.get("assistant_panel")
 
@@ -248,6 +248,8 @@ def render(df, prof):
     with st.expander("Assistant — describe your objective and get a "
                      "recommended setup", expanded=not ss.get(
                          f"{PREFIX}shown")):
+        if auth.denied("ai"):
+            return
         if not key:
             st.info("Set `ANTHROPIC_API_KEY` to use the assistant.")
             return
