@@ -14,7 +14,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from components import export_page, ml_evaluate, ml_summary, snowflake_panel
+from components import (export_page, ml_evaluate, ml_summary, project_panel,
+                        snowflake_panel)
 from logic import ml, ml_eval
 from utils import guard, log
 from utils.constants import ML_PALETTE
@@ -1206,5 +1207,6 @@ def render():
                     hide_index=True, width="stretch")
     st.divider()
     _downloads(run, res, df)
+    project_panel.register(run, res)
     with st.expander("Score a new file with this model"):
         _score_new(run, res)

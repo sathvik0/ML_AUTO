@@ -24,7 +24,7 @@ import streamlit as st
 
 st.set_page_config(page_title="Machine Learning", layout="wide")
 
-from components import ml_unavailable, nav, snowflake_panel
+from components import ml_unavailable, nav, project_panel, snowflake_panel
 from utils import auth, file_loader, frames, guard, scroll
 from utils.file_loader import load_file
 
@@ -38,6 +38,7 @@ ss = st.session_state
 if auth.current_user() is None:
     auth.render_signed_out()
     st.stop()
+project_panel.signed_in()
 
 _LANDING_CSS = """
 <style>
@@ -115,18 +116,22 @@ def _ml_frame(df):
     return frames.dedupe_columns(df.rename(columns=str))
 
 
-def _start_ml(df, source):
+def _start_ml(df, source, name=None, save=True):
     """`ml_source` is the file as it came, `ml_df` that file with the
-    Explore & prepare steps applied (none yet)."""
+    Explore & prepare steps applied (none yet). With a project open, the
+    file becomes its dataset (`save=False` when it came from the project)."""
     _drop_ml_state()
     df = _ml_frame(df)
     ss["ml_source"] = df
     ss["ml_df"] = df
+    ss["ml_name"] = name or source
     ss["ml_steps"] = []
     ss["ml_version"] = 0
     ss["page"] = "ml_eda"
     log.event(_log, "ml_dataset_loaded", rows=len(df), columns=df.shape[1],
               source=source)
+    if save:
+        project_panel.on_new_dataset(df, ss["ml_name"], source)
     scroll.request()
 
 
@@ -160,6 +165,14 @@ def _unloadable(exc):
     ml_unavailable.render(exc, ref, _back_to_start)
 
 
+# ── The project page: needs a project, not a file ───────────────────────
+if ss.get("page") == "ml_project":
+    scroll.apply_if_requested()
+    guard.section("Navigation", nav.render, "ml_project")
+    guard.section("Project", project_panel.render)
+    st.stop()
+
+
 # ── Machine Learning pages ──────────────────────────────────────────────
 if ss.get("page") in ML_PAGES and "ml_df" in ss:
     scroll.apply_if_requested()
@@ -189,6 +202,7 @@ if ss.get("page") in ML_PAGES and "ml_df" in ss:
         guard.section("Drift analysis", drift_page.render)
     else:
         guard.section("Configure & train", ml_config.render)
+    project_panel.autosave()
     st.stop()
 
 
@@ -206,6 +220,7 @@ def _landing():
                 unsafe_allow_html=True)
     _, mid, _ = st.columns([1, 2, 1])
     with mid:
+        guard.section("Projects", project_panel.landing, _start_ml)
         uploaded = st.file_uploader("Upload a .csv or .xlsx / .xls file",
                                     type=["csv", "xlsx", "xls"],
                                     key="main_upload")
@@ -243,15 +258,16 @@ def _launch(go, uploaded, use_sample, sf_df=None):
     if go and uploaded is not None:
         df = load_file(uploaded)
         if df is not None:
-            _start_ml(df, "upload")
+            _start_ml(df, "upload", uploaded.name)
             st.rerun()
     elif use_sample:
-        _start_ml(file_loader.read_path(SAMPLE_PATH), "sample")
+        _start_ml(file_loader.read_path(SAMPLE_PATH), "sample",
+                  os.path.basename(SAMPLE_PATH))
         st.rerun()
     elif sf_df is not None:
         # The picker only returns a frame on the run its Load button was
         # pressed, so this cannot re-fire on a later interaction.
-        _start_ml(sf_df, "snowflake")
+        _start_ml(sf_df, "snowflake", "Snowflake data")
         st.rerun()
 
 

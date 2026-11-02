@@ -4,7 +4,7 @@ cannot be opened yet greyed out. It replaces the per-page navigation
 buttons."""
 import streamlit as st
 
-from utils import auth, scroll
+from utils import auth, guard, scroll
 
 # (page, label). "start" is the start page (no page set).
 STEPS = (("start", "Data"), ("ml_eda", "Explore & prepare"),
@@ -66,13 +66,17 @@ def _go(page):
 def render(current):
     """Draw the bar with `current` highlighted ("start" on the start page)."""
     st.markdown(_CSS, unsafe_allow_html=True)
-    _, account = st.columns([5, 1.4])
+    _, project, account = st.columns([4, 1.5, 1.5])
+    with project:
+        from components import project_panel
+        guard.section("Project", project_panel.chip)
     with account:
         auth.account_menu()
     order = [p for p, _ in STEPS]
     # The branch sits where training would; drift needs only the file.
     at = (order.index(current) if current in order else
           order.index("ml_features") if current == DRIFT[0] else
+          0 if current == "ml_project" else
           order.index("ml_config"))
     with st.container(key="ml_nav"):
         cols = st.columns([0.8, 1.2, 1.3, 1.25, 0.85, 0.2, 1.15, 1.15])

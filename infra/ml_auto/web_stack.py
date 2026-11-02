@@ -1,6 +1,8 @@
-"""The web tier: VPC, ECS Fargate (Streamlit), an HTTPS Application Load
-Balancer that signs every user in with Amazon Cognito, WAF, and the secrets
-the app reads. See docs/architecture.md for why each piece is here.
+"""The application: VPC, ECS Fargate (Streamlit), an HTTPS Application Load
+Balancer that signs every user in with Amazon Cognito, WAF, the secrets the
+app reads, and its data tier — Aurora PostgreSQL Serverless v2 for projects,
+runs and the model registry, and an encrypted S3 bucket for datasets and
+model files. See docs/architecture.md for why each piece is here.
 
 Context (cdk.json or -c):
   domainName        app host name, e.g. ml.example.com          (required)
@@ -10,6 +12,7 @@ Context (cdk.json or -c):
   interfaceEndpoints  true to add ECR/Secrets/Logs endpoints (cuts NAT data,
                     adds ~$7/month per endpoint per AZ)
   minTasks / maxTasks  service size bounds (1 / 4)
+  dbMaxCapacity     Aurora Serverless v2 ceiling in ACUs (4)
 """
 from pathlib import Path
 
@@ -17,8 +20,9 @@ from aws_cdk import (CfnOutput, Duration, RemovalPolicy, Stack, aws_certificatem
                      aws_cognito as cognito, aws_ec2 as ec2, aws_ecr_assets as ecr_assets,
                      aws_ecs as ecs, aws_elasticloadbalancingv2 as elbv2,
                      aws_elasticloadbalancingv2_actions as elb_actions,
-                     aws_elasticloadbalancingv2_targets as elb_targets, aws_lambda as lambda_,
-                     aws_logs as logs, aws_route53 as route53,
+                     aws_elasticloadbalancingv2_targets as elb_targets, aws_kms as kms,
+                     aws_lambda as lambda_, aws_logs as logs, aws_rds as rds,
+                     aws_route53 as route53,
                      aws_route53_targets as route53_targets, aws_s3 as s3,
                      aws_secretsmanager as secretsmanager, aws_wafv2 as wafv2)
 from constructs import Construct
@@ -111,6 +115,37 @@ class WebStack(Stack):
                     '{"ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": ""}'),
                 generate_string_key="unused"))
 
+        # ── data: S3 for files, Aurora for records ───────────────────────
+        data_key = kms.Key(self, "DataKey", enable_key_rotation=True,
+                           alias="alias/ml-auto-data",
+                           description="ML Automation datasets and models",
+                           removal_policy=RemovalPolicy.RETAIN)
+        data_bucket = s3.Bucket(
+            self, "Data", encryption=s3.BucketEncryption.KMS,
+            encryption_key=data_key, bucket_key_enabled=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True, versioned=True,
+            object_ownership=s3.ObjectOwnership.BUCKET_OWNER_ENFORCED,
+            lifecycle_rules=[s3.LifecycleRule(
+                noncurrent_version_expiration=Duration.days(90))],
+            removal_policy=RemovalPolicy.RETAIN)
+        database = rds.DatabaseCluster(
+            self, "Database",
+            engine=rds.DatabaseClusterEngine.aurora_postgres(
+                version=rds.AuroraPostgresEngineVersion.VER_16_9),
+            credentials=rds.Credentials.from_generated_secret("mlauto"),
+            default_database_name="mlauto",
+            writer=rds.ClusterInstance.serverless_v2("writer"),
+            # Pauses when idle: an internal tool is often quiet for hours.
+            serverless_v2_min_capacity=0,
+            serverless_v2_max_capacity=float(ctx("dbMaxCapacity") or 4),
+            vpc=vpc, vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+            storage_encrypted=True,
+            backup=rds.BackupProps(retention=Duration.days(7)),
+            deletion_protection=True,
+            removal_policy=RemovalPolicy.SNAPSHOT)
+
         # ── load balancer ────────────────────────────────────────────────
         zone = route53.HostedZone.from_lookup(self, "Zone",
                                               domain_name=zone_name)
@@ -162,12 +197,21 @@ class WebStack(Stack):
                 "COGNITO_CLIENT_ID": client.user_pool_client_id,
                 "SIGN_OUT_URL": f"{base_url}/logout",
                 "DEFAULT_ROLE": "viewer",
+                "STORAGE_BUCKET": data_bucket.bucket_name,
             },
             secrets={
                 "ANTHROPIC_API_KEY": ecs.Secret.from_secrets_manager(
                     app_keys, "ANTHROPIC_API_KEY"),
                 "OPENAI_API_KEY": ecs.Secret.from_secrets_manager(
                     app_keys, "OPENAI_API_KEY"),
+                # The cluster's own generated secret, field by field.
+                **{env: ecs.Secret.from_secrets_manager(database.secret,
+                                                        field)
+                   for env, field in (("DB_HOST", "host"),
+                                      ("DB_PORT", "port"),
+                                      ("DB_USER", "username"),
+                                      ("DB_PASSWORD", "password"),
+                                      ("DB_NAME", "dbname"))},
             },
             health_check=ecs.HealthCheck(
                 command=["CMD-SHELL",
@@ -183,6 +227,10 @@ class WebStack(Stack):
             circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS))
+        data_bucket.grant_read_write(task.task_role)
+        data_bucket.grant_delete(task.task_role)
+        database.connections.allow_default_port_from(
+            service, "the web service")
         target = elbv2.ApplicationTargetGroup(
             self, "WebTargets", vpc=vpc, port=PORT,
             protocol=elbv2.ApplicationProtocol.HTTP,
@@ -288,3 +336,6 @@ class WebStack(Stack):
         CfnOutput(self, "UserPoolId", value=pool.user_pool_id)
         CfnOutput(self, "AppKeysSecret", value=app_keys.secret_name)
         CfnOutput(self, "LogGroup", value=log_group.log_group_name)
+        CfnOutput(self, "DataBucket", value=data_bucket.bucket_name)
+        CfnOutput(self, "DatabaseEndpoint",
+                  value=database.cluster_endpoint.hostname)
