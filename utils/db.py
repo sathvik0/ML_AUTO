@@ -67,6 +67,9 @@ class Project(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     owner_email: Mapped[str] = mapped_column(String(320), index=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Governance policy, e.g. {"require_fairness": true}.
+    settings: Mapped[dict] = mapped_column(JSON, default=dict,
+                                           server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
                                                  default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
@@ -333,6 +336,54 @@ class Job(Base):
         DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
+
+
+class AuditEvent(Base):
+    """One thing someone did. Append-only and hash-chained: each event's
+    hash covers its content and the previous event's hash, so changing or
+    removing any event breaks the chain from there on. The project is a
+    plain id, not a foreign key: the history outlives a deleted project."""
+    __tablename__ = "audit_events"
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True,
+                                     autoincrement=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                         default=now, index=True)
+    actor: Mapped[str] = mapped_column(String(320), index=True)
+    actor_role: Mapped[str] = mapped_column(String(16), default="")
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True,
+                                                   index=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(32), default="")
+    target_id: Mapped[str] = mapped_column(String(64), default="")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Unique: two events can never claim the same predecessor, so a race
+    # fails loudly instead of forking the chain.
+    prev_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+
+class FairnessReport(Base):
+    """How a model version treats groups of a sensitive attribute, on its
+    out-of-sample predictions."""
+    __tablename__ = "fairness_reports"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="CASCADE"), index=True)
+    attributes: Mapped[list] = mapped_column(JSON)
+    report: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16))  # pass/flag/insufficient
+    rows: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                                 default=now)
+    accepted_by: Mapped[str | None] = mapped_column(String(320),
+                                                    nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    acceptance_note: Mapped[str] = mapped_column(Text, default="")
 
 
 def engine(database_url=None):

@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import select, update
 
-from logic import (deployment, ml, ml_drift, ml_eval, ml_prep, ml_recipe,
+from logic import (audit, deployment, ml, ml_drift, ml_eval, ml_prep, ml_recipe,
                    projects, serving)
 from logic.deployment import _aware, _now, next_run
 from logic.projects import AccessDenied, _email, _need
@@ -67,6 +67,8 @@ def create_monitor(user, project_id, *, name, model_name, source,
                        next_run_at=next_run(schedule),
                        created_by=_email(user))
         s.add(m)
+        s.flush()
+        audit.record(s, user, "monitor.create", project_id, "monitor", m.id, model=model_name, retrain=retrain, schedule=m.schedule, webhook=bool(webhook))
         s.commit()
         return m.id
 
@@ -96,6 +98,7 @@ def set_enabled(user, project_id, monitor_id, enabled):
         m = _monitor(s, project_id, monitor_id)
         m.enabled = bool(enabled)
         m.next_run_at = next_run(m.schedule) if enabled else None
+        audit.record(s, user, "monitor.resume" if enabled else "monitor.pause", project_id, "monitor", monitor_id)
         s.commit()
 
 
@@ -107,6 +110,7 @@ def delete_monitor(user, project_id, monitor_id):
                 db.MonitorRun.monitor_id == monitor_id)):
             s.delete(r)
         s.delete(m)
+        audit.record(s, user, "monitor.delete", project_id, "monitor", monitor_id)
         s.commit()
 
 
@@ -426,6 +430,7 @@ def run_monitor(monitor_id, triggered_by="schedule", snowflake=None,
         if m.schedule and m.enabled and (pending is None
                                          or pending <= _now()):
             m.next_run_at = next_run(m.schedule)
+        audit.record(s, (triggered_by if "@" in triggered_by else "system:monitor"), "monitor.check", m.project_id, "monitor", m.id, status=status, alerted=alerted, retrained=retrained["id"] if retrained else None)
         s.commit()
     log.event(_log, "monitor_checked", status=status, alerted=alerted,
               retrained=bool(retrained))

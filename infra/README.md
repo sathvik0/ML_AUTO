@@ -111,6 +111,18 @@ or two for a worker to start. A worker running a job holds ECS scale-in
 protection, so neither scaling in nor a deploy stops it mid-run. Logs: the
 `worker/` prefix in the log group.
 
+## Audit trail
+
+The audit log lives in Aurora (`audit_events`): append-only, hash-chained,
+and protected by a trigger that refuses UPDATE and DELETE. Admins verify
+the chain from the app (Audit log → Verify chain). Each event is also
+written to the log group as an `audit` event, for a SIEM.
+
+The app connects as the cluster's master user, which could drop that
+trigger: the hash chain still exposes any change, but for storage nobody
+can alter, give the app a database role without DDL rights, or export the
+log regularly to an S3 bucket with Object Lock (compliance mode).
+
 ## Alerts
 
 Two SNS topics (stack outputs): **ModelAlertsTopic** for monitoring alerts

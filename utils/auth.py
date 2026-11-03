@@ -16,7 +16,7 @@ gets `DEFAULT_ROLE` (viewer unless set). Permissions are by role:
     viewer   load data, explore, drift analysis, view results
     analyst  + change data, feature engineering, train, AI features,
                use own models, Snowflake
-    admin    + system status
+    admin    + administration: the audit log across every project
 
 For local work, `AUTH_MODE=dev` signs in a development user (role from
 `DEV_ROLE`, admin by default) and offers a role switcher to test what each
@@ -51,7 +51,7 @@ WHAT = {
     "ai": "use the AI features",
     "own_model": "use your own models",
     "snowflake": "connect to Snowflake",
-    "admin": "see system status",
+    "admin": "use administration (the audit log)",
 }
 KEY = "auth_user"            # not ml_*: survives loading a new file
 DEV_ROLE_KEY = "auth_dev_role"
@@ -271,6 +271,10 @@ def account_menu():
             st.caption("Development sign-in (AUTH_MODE=dev).")
             st.session_state.setdefault(DEV_ROLE_KEY, u["role"])
             st.selectbox("View as", ROLES, key=DEV_ROLE_KEY)
+        if can("admin") and st.button("Audit log", width="stretch",
+                                      key="auth_audit"):
+            st.session_state["page"] = "ml_audit"
+            st.rerun()
         url = os.environ.get("SIGN_OUT_URL")
         if url:
             st.link_button("Sign out", url, width="stretch")
