@@ -26,7 +26,7 @@ from datetime import timedelta
 
 from sqlalchemy import or_, select, update
 
-from logic import projects
+from logic import audit, projects
 from logic.deployment import _aware, _now
 from logic.projects import AccessDenied, _email, _need
 from utils import db, log
@@ -63,6 +63,8 @@ def submit_training(user, project_id, config, steps, dataset_id):
                             "role": user.get("role", "viewer")},
                    created_by=_email(user))
         s.add(j)
+        s.flush()
+        audit.record(s, user, "job.submit", project_id, "job", j.id, kind="train", models=len(config.get("models") or []))
         s.commit()
         job_id = j.id
     log.event(_log, "job_submitted", kind="train",
@@ -112,6 +114,7 @@ def request_cancel(user, project_id, job_id):
             j.message = f"Cancelled by {_email(user)} before it started."
         elif j.status == "running":
             j.cancel_requested = True
+        audit.record(s, user, "job.cancel", project_id, "job", job_id, was=j.status)
         s.commit()
 
 
@@ -178,6 +181,7 @@ def finish(job_id, status, message="", result=None):
         j.finished_at = _now()
         if status == "succeeded":
             j.progress, j.progress_text = 1.0, "Done"
+        audit.record(s, "system:worker", "job.finish", j.project_id, "job", job_id, status=status)
         s.commit()
 
 

@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from sqlalchemy import select, update
 
-from logic import projects, serving
+from logic import audit, projects, serving
 from logic.projects import AccessDenied, _email, _need
 from utils import db, storage
 
@@ -65,6 +65,7 @@ def set_stage(user, project_id, version_id, stage, comment=""):
                             comment=comment, requested_by=_email(user),
                             decided_by=_email(user), decided_at=_now()))
         v.stage = stage
+        audit.record(s, user, "model.stage", project_id, "model_version", version_id, model=v.name, version=v.version, stage=stage)
         s.commit()
 
 
@@ -74,6 +75,10 @@ def request_production(user, project_id, version_id, comment=""):
         v = _version(s, project_id, version_id)
         if v.stage == "production":
             raise AccessDenied("That version is already in production.")
+        from logic import fairness
+        blocked = fairness.production_blocker(s, project_id, v.id)
+        if blocked:
+            raise AccessDenied(blocked)
         pending = s.scalar(select(db.Transition).where(
             db.Transition.version_id == v.id,
             db.Transition.status == "pending"))
@@ -84,6 +89,8 @@ def request_production(user, project_id, version_id, comment=""):
                           to_stage="production", status="pending",
                           comment=comment or "", requested_by=_email(user))
         s.add(t)
+        s.flush()
+        audit.record(s, user, "model.request_production", project_id, "model_version", v.id, model=v.name, version=v.version, request=t.id)
         s.commit()
         return t.id
 
@@ -109,6 +116,7 @@ def _decide(user, project_id, transition_id, approve, note):
                     db.ModelVersion.id != v.id)):
                 other.stage = "archived"
             v.stage = "production"
+        audit.record(s, user, "model.approve" if approve else "model.reject", project_id, "model_version", t.version_id, request=t.id)
         s.commit()
 
 
@@ -130,6 +138,7 @@ def cancel(user, project_id, transition_id):
             raise AccessDenied("Only the requester can withdraw it.")
         t.status = "cancelled"
         t.decided_by, t.decided_at = _email(user), _now()
+        audit.record(s, user, "model.request_withdrawn", project_id, "model_version", t.version_id, request=t.id)
         s.commit()
 
 
@@ -190,6 +199,8 @@ def create_key(user, project_id, name):
         k = db.ApiKey(project_id=project_id, name=name, prefix=key[:10],
                       key_hash=_hash(key), created_by=_email(user))
         s.add(k)
+        s.flush()
+        audit.record(s, user, "apikey.create", project_id, "api_key", k.id, name=name, prefix=k.prefix)
         s.commit()
         return key, k.id
 
@@ -213,6 +224,7 @@ def revoke_key(user, project_id, key_id):
         if k is None or k.project_id != project_id:
             raise AccessDenied("That key is not in this project.")
         k.revoked_at = k.revoked_at or _now()
+        audit.record(s, user, "apikey.revoke", project_id, "api_key", key_id)
         s.commit()
 
 
@@ -279,6 +291,8 @@ def create_job(user, project_id, *, name, model_name, source, destination,
                         next_run_at=next_run(schedule),
                         created_by=_email(user))
         s.add(j)
+        s.flush()
+        audit.record(s, user, "batch.create", project_id, "batch_job", j.id, model=model_name, schedule=j.schedule, source=source["type"], destination=destination["type"])
         s.commit()
         return j.id
 
@@ -305,6 +319,7 @@ def set_enabled(user, project_id, job_id, enabled):
             raise AccessDenied("That job is not in this project.")
         j.enabled = bool(enabled)
         j.next_run_at = next_run(j.schedule) if enabled else None
+        audit.record(s, user, "batch.resume" if enabled else "batch.pause", project_id, "batch_job", job_id)
         s.commit()
 
 
@@ -318,6 +333,7 @@ def delete_job(user, project_id, job_id):
                 db.BatchRun.job_id == job_id)):
             s.delete(r)
         s.delete(j)
+        audit.record(s, user, "batch.delete", project_id, "batch_job", job_id)
         s.commit()
 
 
@@ -440,6 +456,7 @@ def run_job(job_id, triggered_by="schedule", snowflake=None):
         if j.schedule and j.enabled and (pending is None
                                          or pending <= _now()):
             j.next_run_at = next_run(j.schedule)
+        audit.record(s, (triggered_by if "@" in triggered_by else "system:batch"), "batch.run", j.project_id, "batch_job", job_id, status=status, rows=rows, model_version=version_id)
         s.commit()
     return {"id": run_id, "status": status, "rows": rows,
             "message": message}

@@ -463,7 +463,11 @@ def render():
     from components import monitor_panel
     guard.section("Monitoring", monitor_panel.render, p, user)
     st.divider()
+    from components import governance_panel
+    guard.section("Fairness", governance_panel.fairness_section, p, user)
+    st.divider()
     guard.section("Model API", deploy_panel.api_keys, p, user)
     st.divider()
     guard.section("Members", _members, p, user)
+    guard.section("Activity", governance_panel.activity_section, p, user)
     guard.section("Settings", _settings, p, user)

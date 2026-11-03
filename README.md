@@ -200,6 +200,27 @@ plus the newly labelled rows, registered as a *staging* version for review
 a time. `python -m worker.batch --due` runs due monitors with the batch
 jobs.
 
+## Governance
+
+- **Audit trail** — every meaningful action (sign-in, project and sharing
+  changes, datasets, runs, model registration, stage requests and
+  approvals, API keys, batch jobs, monitors, background jobs, fairness
+  checks) is recorded with who, when, what and on which project. Events are
+  append-only and **hash-chained** (each covers the one before), written in
+  the same transaction as the action; admins open **Audit log** from the
+  account menu, filter, export and **verify the chain**. Project owners see
+  their project's **Activity**.
+- **Fairness** — on the project page, check a model version across groups
+  of sensitive attributes (gender, age band, region…), on its out-of-sample
+  predictions: selection-rate ratio (four-fifths rule), true- and
+  false-positive-rate gaps for classifiers; error ratio and bias gap for
+  regression. Groups' actual rates are shown beside the predictions, so a
+  real difference can be told from model bias; an owner can accept a
+  flagged report with a written reason.
+- **Policy** — a project can require a passing (or accepted) fairness check
+  before a version may be requested for production; approvers see the
+  fairness result beside each request.
+
 ## Deploying to AWS
 
 See [docs/architecture.md](docs/architecture.md) for the design and

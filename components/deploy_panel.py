@@ -6,6 +6,7 @@ import os
 import pandas as pd
 import streamlit as st
 
+from components import governance_panel
 from logic import deployment, projects
 from logic.projects import AccessDenied
 from utils import auth, guard, log
@@ -76,6 +77,7 @@ def stages(p, user):
         c1, c2, c3 = st.columns([4, 1, 1], vertical_alignment="center")
         c1.markdown(f"{t['model']} v{t['version']} → **production** · "
                     f"asked by {t['requested_by']} {_t(t['requested_at'])}"
+                    f" · {governance_panel.fairness_badge(user, p['id'], t['version_id'])}"
                     + (f"  \n_{t['comment']}_" if t["comment"] else ""))
         if t["requested_by"] == me:
             if c3.button("Withdraw", key=f"dep_cancel_{t['id']}",

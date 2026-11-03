@@ -21,6 +21,7 @@ import joblib
 import pandas as pd
 from sqlalchemy import func, select
 
+from logic import audit
 from utils import db, storage
 
 PROJECT_ROLES = ("viewer", "editor", "owner")
@@ -52,6 +53,7 @@ def touch_user(user):
                                               user.get("name") or "",
                                               db.now())
         s.merge(row)
+        audit.record(s, user, "auth.sign_in")
         s.commit()
 
 
@@ -105,6 +107,7 @@ def create_project(user, name, description=""):
                         added_by=_email(user)))
         s.add(db.Workspace(project_id=p.id, steps=[], config={},
                            updated_by=_email(user)))
+        audit.record(s, user, "project.create", p.id, "project", p.id, name=p.name)
         s.commit()
         return {"id": p.id, "name": p.name, "role": "owner"}
 
@@ -133,6 +136,7 @@ def rename(user, project_id, name):
     with db.session() as s:
         p, _ = _need(s, user, project_id, "owner")
         p.name, p.updated_at = name.strip()[:200] or p.name, db.now()
+        audit.record(s, user, "project.rename", project_id, "project", project_id, name=p.name)
         s.commit()
 
 
@@ -140,6 +144,7 @@ def archive(user, project_id):
     with db.session() as s:
         p, _ = _need(s, user, project_id, "owner")
         p.archived, p.updated_at = True, db.now()
+        audit.record(s, user, "project.archive", project_id, "project", project_id)
         s.commit()
 
 
@@ -153,6 +158,7 @@ def delete(user, project_id):
                     model.project_id == project_id)):
                 s.delete(row)
         s.delete(p)
+        audit.record(s, user, "project.delete", project_id, "project", project_id, name=p.name)
         s.commit()
     storage.delete_prefix(f"projects/{project_id}/")
 
@@ -184,6 +190,7 @@ def share(user, project_id, email, role):
             if m.role == "owner" and role != "owner":
                 _keep_an_owner(s, project_id, email)
             m.role = role
+        audit.record(s, user, "project.share", project_id, "member", email, role=role)
         s.commit()
 
 
@@ -198,6 +205,7 @@ def unshare(user, project_id, email):
         if m.role == "owner":
             _keep_an_owner(s, project_id, email)
         s.delete(m)
+        audit.record(s, user, "project.unshare", project_id, "member", email)
         s.commit()
 
 
@@ -242,6 +250,7 @@ def save_dataset(user, project_id, df, name, source):
         ws.updated_by, ws.updated_at = _email(user), db.now()
         s.merge(ws)
         s.get(db.Project, project_id).updated_at = db.now()
+        audit.record(s, user, "dataset.save", project_id, "dataset", d.id, rows=len(df), columns=df.shape[1], source=source)
         s.commit()
         return d.id
 
@@ -315,6 +324,7 @@ def save_run(user, project_id, run, dataset_id=None):
         joblib.dump(run, buf, compress=3)
         storage.put(r.object_key, buf.getvalue())
         s.get(db.Project, project_id).updated_at = db.now()
+        audit.record(s, user, "run.save", project_id, "run", r.id, task=run["task"], best=run.get("best"), external=bool(run.get("external")))
         s.commit()
         return r.id
 
@@ -367,6 +377,7 @@ def register_model(user, project_id, run_id, model_bytes, *, name,
         v.object_key = (f"projects/{project_id}/models/{v.id}/"
                         f"v{v.version}.joblib")
         storage.put(v.object_key, model_bytes)
+        audit.record(s, user, "model.register", project_id, "model_version", v.id, model=name, version=v.version)
         s.commit()
         return {"id": v.id, "name": name, "version": v.version}
 

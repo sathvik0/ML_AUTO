@@ -165,6 +165,15 @@ def _unloadable(exc):
     ml_unavailable.render(exc, ref, _back_to_start)
 
 
+# ── The admins' audit log ───────────────────────────────────────────────
+if ss.get("page") == "ml_audit":
+    from components import governance_panel
+    scroll.apply_if_requested()
+    guard.section("Navigation", nav.render, "ml_audit")
+    guard.section("Audit log", governance_panel.audit_page)
+    st.stop()
+
+
 # ── The project page: needs a project, not a file ───────────────────────
 if ss.get("page") == "ml_project":
     scroll.apply_if_requested()
