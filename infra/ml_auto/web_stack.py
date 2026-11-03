@@ -15,6 +15,7 @@ Context (cdk.json or -c):
   dbMaxCapacity     Aurora Serverless v2 ceiling in ACUs (4)
   alertEmail        subscribe this address to model alerts (optional)
   opsEmail          subscribe this address to infrastructure alarms
+  maxWorkers        most training workers at once (4)
 """
 from pathlib import Path
 
@@ -29,6 +30,8 @@ from aws_cdk import (CfnOutput, Duration, RemovalPolicy, Stack, aws_certificatem
                      aws_route53_targets as route53_targets, aws_s3 as s3,
                      aws_cloudwatch as cloudwatch,
                      aws_cloudwatch_actions as cw_actions, aws_sns as sns,
+                     aws_applicationautoscaling as appscaling,
+                     aws_iam as iam, aws_sqs as sqs,
                      aws_sns_subscriptions as sns_subs,
                      aws_secretsmanager as secretsmanager, aws_wafv2 as wafv2)
 from constructs import Construct
@@ -205,11 +208,26 @@ class WebStack(Stack):
             if email:
                 topic.add_subscription(sns_subs.EmailSubscription(email))
 
+        # ── background jobs: a queue says "there is work" ────────────────
+        # The database holds each job's state; a message that keeps failing
+        # to be handled is parked in the dead-letter queue (and alarmed).
+        jobs_dlq = sqs.Queue(self, "JobsDlq",
+                             encryption=sqs.QueueEncryption.SQS_MANAGED,
+                             enforce_ssl=True,
+                             retention_period=Duration.days(14))
+        jobs_queue = sqs.Queue(
+            self, "Jobs", encryption=sqs.QueueEncryption.SQS_MANAGED,
+            enforce_ssl=True, visibility_timeout=Duration.seconds(300),
+            retention_period=Duration.days(4),
+            dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=5,
+                                                  queue=jobs_dlq))
+
         # What every service reading projects needs: storage and the
         # database (credentials from the cluster's own secret, by field).
         data_env = {"AWS_REGION": self.region,
                     "STORAGE_BUCKET": data_bucket.bucket_name,
-                    "ALERTS_TOPIC_ARN": model_alerts.topic_arn}
+                    "ALERTS_TOPIC_ARN": model_alerts.topic_arn,
+                    "JOBS_QUEUE_URL": jobs_queue.queue_url}
         db_secrets = {
             env: ecs.Secret.from_secrets_manager(database.secret, field)
             for env, field in (("DB_HOST", "host"), ("DB_PORT", "port"),
@@ -256,6 +274,7 @@ class WebStack(Stack):
         data_bucket.grant_read_write(task.task_role)
         data_bucket.grant_delete(task.task_role)
         model_alerts.grant_publish(task.task_role)   # "Check now" alerts
+        jobs_queue.grant_send_messages(task.task_role)
         database.connections.allow_default_port_from(
             service, "the web service")
         target = elbv2.ApplicationTargetGroup(
@@ -370,6 +389,56 @@ class WebStack(Stack):
                     subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
                 security_groups=[batch_sg])])
 
+        # ── training workers: scale from zero on the queue ───────────────
+        worker_task = ecs.FargateTaskDefinition(
+            self, "WorkerTask", cpu=4096, memory_limit_mib=16384,
+            runtime_platform=ecs.RuntimePlatform(
+                cpu_architecture=ecs.CpuArchitecture.X86_64,
+                operating_system_family=ecs.OperatingSystemFamily.LINUX))
+        worker_task.add_container(
+            "worker", image=ecs.ContainerImage.from_docker_image_asset(image),
+            command=["python", "-m", "worker.trainer"],
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="worker",
+                                            log_group=log_group),
+            stop_timeout=Duration.seconds(120),
+            environment=data_env, secrets=db_secrets)
+        worker_service = ecs.FargateService(
+            self, "Worker", cluster=cluster, task_definition=worker_task,
+            desired_count=0, min_healthy_percent=0, max_healthy_percent=200,
+            circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
+            vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS))
+        data_bucket.grant_read_write(worker_task.task_role)
+        jobs_queue.grant_consume_messages(worker_task.task_role)
+        jobs_queue.grant_send_messages(worker_task.task_role)  # re-sends
+        database.connections.allow_default_port_from(worker_service,
+                                                     "training workers")
+        # A worker running a job protects itself from scale-in (and from
+        # being replaced mid-run by a deploy) through the ECS agent.
+        worker_task.task_role.add_to_principal_policy(iam.PolicyStatement(
+            actions=["ecs:GetTaskProtection", "ecs:UpdateTaskProtection"],
+            resources=[f"arn:aws:ecs:{self.region}:{self.account}:task/"
+                       f"{cluster.cluster_name}/*"]))
+        queue_depth = cloudwatch.MathExpression(
+            expression="visible + inflight", label="Jobs waiting or running",
+            period=Duration.minutes(1), using_metrics={
+                "visible": jobs_queue
+                .metric_approximate_number_of_messages_visible(
+                    period=Duration.minutes(1), statistic="Maximum"),
+                "inflight": jobs_queue
+                .metric_approximate_number_of_messages_not_visible(
+                    period=Duration.minutes(1), statistic="Maximum")})
+        worker_scaling = worker_service.auto_scale_task_count(
+            min_capacity=0, max_capacity=int(ctx("maxWorkers") or 4))
+        worker_scaling.scale_on_metric(
+            "QueueDepth", metric=queue_depth,
+            adjustment_type=appscaling.AdjustmentType.CHANGE_IN_CAPACITY,
+            scaling_steps=[
+                appscaling.ScalingInterval(upper=0, change=-1),
+                appscaling.ScalingInterval(lower=1, upper=4, change=+1),
+                appscaling.ScalingInterval(lower=4, change=+2)],
+            cooldown=Duration.minutes(2), evaluation_periods=1)
+
         # ── sign-out: only the load balancer can clear its own cookie ────
         logout = lambda_.Function(
             self, "Logout", runtime=lambda_.Runtime.PYTHON_3_12,
@@ -474,7 +543,11 @@ class WebStack(Stack):
                  "the model API returned 5xx errors"),
                 ("ApiSlow", api_target.metrics.target_response_time(
                     period=five, statistic="p95"), 2,
-                 "model API p95 latency above 2 seconds")):
+                 "model API p95 latency above 2 seconds"),
+                ("JobsDeadLetter", jobs_dlq
+                 .metric_approximate_number_of_messages_visible(
+                     period=five, statistic="Maximum"), 1,
+                 "background jobs are landing in the dead-letter queue")):
             alarm = cloudwatch.Alarm(
                 self, f"Alarm{name}", metric=metric, threshold=threshold,
                 evaluation_periods=1,

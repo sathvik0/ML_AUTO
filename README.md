@@ -164,6 +164,20 @@ From a project's page:
   schedule. `python -m worker.batch --due` runs whatever is due (on AWS a
   scheduled task runs it every 15 minutes).
 
+## Training in the background
+
+With a project open, **Train in the background** (Configure & train) queues
+the run instead of training in the page: a live panel shows its progress,
+**Cancel** stops it at the next model fit, and **Open results** opens it
+when it is done — you can leave the page or close the tab meanwhile. The
+project page lists recent training jobs (open, cancel, retry).
+
+On AWS the job goes to an SQS queue and a worker service that scales from
+zero (`python -m worker.trainer`); a worker that stops mid-run is noticed
+and the job restarts on another, up to three times. Locally a background
+thread runs it (`JOBS_THREADS`, 1 by default). **Train models** still
+trains in the page, which suits quick runs and unsaved work.
+
 ## Monitoring models in production
 
 A **monitor** (project page → Monitoring) checks a model's production

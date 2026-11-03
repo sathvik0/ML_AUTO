@@ -639,6 +639,9 @@ def render():
     _restore()
     prof = _profile(df)
     _header(df)
+    if ss.get("ml_job"):
+        from components import jobs_panel
+        jobs_panel.watch()
     from components import assistant_panel   # imports this module
     guard.section("Assistant", assistant_panel.render, df, prof)
     task = _task()
@@ -669,10 +672,26 @@ def render():
     if not errors:
         _plan_line(config, len(df))
         _code(df, config)
-    go = st.button("Train models", type="primary",
-                   disabled=bool(errors) or not auth.can("train"),
-                   help=auth.why_not("train"), key="ml_train")
+    from components import jobs_panel
+    blocked = bool(errors) or not auth.can("train")
+    if jobs_panel.available():
+        c1, c2 = st.columns(2)
+        background = c1.button(
+            "Train in the background", type="primary", width="stretch",
+            disabled=blocked, key="ml_train_bg",
+            help="Runs on a worker: keep working, leave the page, or close "
+                 "the tab; the run is saved to the project.")
+        go = c2.button("Train models", width="stretch", disabled=blocked,
+                       help=auth.why_not("train") or "Trains here and "
+                       "waits: fine for quick runs.", key="ml_train")
+    else:
+        background = False
+        go = st.button("Train models", type="primary", disabled=blocked,
+                       help=auth.why_not("train"), key="ml_train")
     _save()
+    if background:
+        guard.action("Queueing", "The training job could not be queued.",
+                     jobs_panel.submit, config)
     if go:
         guard.action("Training", "The models could not be trained.", _train,
                      df, config)
