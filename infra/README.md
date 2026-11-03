@@ -100,6 +100,18 @@ OIDC), map the IdP's email and name, and map an IdP group claim to the
 `admin` / `analyst` / `viewer`. Then add the provider to the app client's
 identity providers. (This will move into the stack once the IdP is chosen.)
 
+## Alerts
+
+Two SNS topics (stack outputs): **ModelAlertsTopic** for monitoring alerts
+and **OpsAlarmsTopic** for platform alarms (load balancer 5xx, unhealthy
+web or API tasks, API errors and p95 latency over 2 s).
+
+- Email: deploy with `-c alertEmail=ml-team@example.com -c
+  opsEmail=oncall@example.com`, or subscribe addresses in the SNS console;
+  each confirms by email.
+- Slack or Microsoft Teams: connect the topics in **AWS Chatbot**. Monitors
+  can also post to their own Slack/Teams incoming webhook.
+
 ## The model API and batch jobs
 
 - `https://<host>/api/health` → `{"status":"ok"}` (no sign-in on `/api/*`;

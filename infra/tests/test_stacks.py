@@ -195,3 +195,49 @@ def test_api_cannot_write_data(stacks):
     assert any(a.startswith("s3:GetObject") for a in actions)
     assert not any(a.startswith(("s3:PutObject", "s3:DeleteObject"))
                    for a in actions)
+
+
+def _policy_actions(web, role_prefix):
+    res = web.to_json()["Resources"]
+    roles = [k for k, r in res.items() if r["Type"] == "AWS::IAM::Role"
+             and k.startswith(role_prefix)]
+    out = set()
+    for r in res.values():
+        if r["Type"] == "AWS::IAM::Policy" and any(
+                ref.get("Ref") in roles for ref in r["Properties"]["Roles"]):
+            for st_ in r["Properties"]["PolicyDocument"]["Statement"]:
+                a = st_["Action"]
+                out |= set(a if isinstance(a, list) else [a])
+    return out
+
+
+def test_model_alerts_and_ops_alarms_are_separate_topics(stacks):
+    web, _ = stacks
+    names = {r["Properties"]["TopicName"]
+             for r in web.to_json()["Resources"].values()
+             if r["Type"] == "AWS::SNS::Topic"}
+    assert names == {"ml-auto-model-alerts", "ml-auto-ops-alarms"}
+    c = _containers(web)
+    for name in ("web", "batch"):
+        assert "ALERTS_TOPIC_ARN" in {e["Name"] for e in
+                                      c[name]["Environment"]}
+
+
+def test_only_web_and_batch_publish_alerts(stacks):
+    web, _ = stacks
+    assert "sns:Publish" in _policy_actions(web, "WebTaskTaskRole")
+    assert "sns:Publish" in _policy_actions(web, "BatchTaskTaskRole")
+    assert "sns:Publish" not in _policy_actions(web, "ApiTaskTaskRole")
+
+
+def test_platform_alarms_notify_ops(stacks):
+    web, _ = stacks
+    alarms = [r["Properties"] for r in web.to_json()["Resources"].values()
+              if r["Type"] == "AWS::CloudWatch::Alarm"]
+    assert len(alarms) == 5
+    ops = next(k for k, r in web.to_json()["Resources"].items()
+               if r["Type"] == "AWS::SNS::Topic"
+               and r["Properties"]["TopicName"] == "ml-auto-ops-alarms")
+    for a in alarms:
+        assert a["AlarmActions"] == [{"Ref": ops}]
+        assert a["OKActions"] == [{"Ref": ops}]

@@ -164,6 +164,28 @@ From a project's page:
   schedule. `python -m worker.batch --due` runs whatever is due (on AWS a
   scheduled task runs it every 15 minutes).
 
+## Monitoring models in production
+
+A **monitor** (project page → Monitoring) checks a model's production
+version against newer rows — the project's dataset, an uploaded file or a
+Snowflake query — on demand or on a schedule:
+
+- **Drift** on the model's own features, against the exact data it was
+  trained on: columns with major or moderate PSI, the drift classifier's
+  AUC, and the relationships that moved.
+- **Accuracy**, when the newer rows include the actual outcome: the model's
+  metric on them against its score at training.
+
+Each check ends **ok**, **warning** or **alert** by the monitor's
+thresholds, and the trend is charted over time. Alerts go to the
+deployment's alert topic (email, or Slack/Teams via AWS Chatbot) and, if
+set, the monitor's own Slack or Teams webhook. A monitor can also
+**retrain on alert**: the model's winning settings on the training data
+plus the newly labelled rows, registered as a *staging* version for review
+— production still needs approval, and only one retrained version waits at
+a time. `python -m worker.batch --due` runs due monitors with the batch
+jobs.
+
 ## Deploying to AWS
 
 See [docs/architecture.md](docs/architecture.md) for the design and

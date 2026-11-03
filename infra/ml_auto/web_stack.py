@@ -13,6 +13,8 @@ Context (cdk.json or -c):
                     adds ~$7/month per endpoint per AZ)
   minTasks / maxTasks  service size bounds (1 / 4)
   dbMaxCapacity     Aurora Serverless v2 ceiling in ACUs (4)
+  alertEmail        subscribe this address to model alerts (optional)
+  opsEmail          subscribe this address to infrastructure alarms
 """
 from pathlib import Path
 
@@ -25,6 +27,9 @@ from aws_cdk import (CfnOutput, Duration, RemovalPolicy, Stack, aws_certificatem
                      aws_lambda as lambda_, aws_logs as logs, aws_rds as rds,
                      aws_route53 as route53,
                      aws_route53_targets as route53_targets, aws_s3 as s3,
+                     aws_cloudwatch as cloudwatch,
+                     aws_cloudwatch_actions as cw_actions, aws_sns as sns,
+                     aws_sns_subscriptions as sns_subs,
                      aws_secretsmanager as secretsmanager, aws_wafv2 as wafv2)
 from constructs import Construct
 
@@ -185,10 +190,26 @@ class WebStack(Stack):
         image = ecr_assets.DockerImageAsset(
             self, "WebImage", directory=str(APP_DIR),
             platform=ecr_assets.Platform.LINUX_AMD64)
+        # ── alerts: model monitoring, and the platform's own alarms ──────
+        # Two audiences: data scientists for drift, operators for outages.
+        model_alerts = sns.Topic(self, "ModelAlerts",
+                                 topic_name="ml-auto-model-alerts",
+                                 display_name="ML Automation model alerts",
+                                 enforce_ssl=True)
+        ops_alarms = sns.Topic(self, "OpsAlarms",
+                               topic_name="ml-auto-ops-alarms",
+                               display_name="ML Automation alarms",
+                               enforce_ssl=True)
+        for topic, email in ((model_alerts, ctx("alertEmail")),
+                             (ops_alarms, ctx("opsEmail"))):
+            if email:
+                topic.add_subscription(sns_subs.EmailSubscription(email))
+
         # What every service reading projects needs: storage and the
         # database (credentials from the cluster's own secret, by field).
         data_env = {"AWS_REGION": self.region,
-                    "STORAGE_BUCKET": data_bucket.bucket_name}
+                    "STORAGE_BUCKET": data_bucket.bucket_name,
+                    "ALERTS_TOPIC_ARN": model_alerts.topic_arn}
         db_secrets = {
             env: ecs.Secret.from_secrets_manager(database.secret, field)
             for env, field in (("DB_HOST", "host"), ("DB_PORT", "port"),
@@ -234,6 +255,7 @@ class WebStack(Stack):
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS))
         data_bucket.grant_read_write(task.task_role)
         data_bucket.grant_delete(task.task_role)
+        model_alerts.grant_publish(task.task_role)   # "Check now" alerts
         database.connections.allow_default_port_from(
             service, "the web service")
         target = elbv2.ApplicationTargetGroup(
@@ -332,6 +354,7 @@ class WebStack(Stack):
                 for field in ("account", "user", "password", "role",
                               "warehouse", "database", "schema")}})
         data_bucket.grant_read_write(batch_task.task_role)
+        model_alerts.grant_publish(batch_task.task_role)
         batch_sg = ec2.SecurityGroup(self, "BatchSg", vpc=vpc,
                                      description="ML Automation batch jobs")
         database.connections.allow_default_port_from(batch_sg,
@@ -433,7 +456,38 @@ class WebStack(Stack):
                                    resource_arn=alb.load_balancer_arn,
                                    web_acl_arn=acl.attr_arn)
 
+        # ── platform alarms → the ops topic ──────────────────────────────
+        notify = cw_actions.SnsAction(ops_alarms)
+        five = Duration.minutes(5)
+        for name, metric, threshold, what in (
+                ("Alb5xx", alb.metrics.http_code_elb(
+                    elbv2.HttpCodeElb.ELB_5XX_COUNT, period=five), 10,
+                 "the load balancer returned 5xx errors"),
+                ("WebUnhealthy", target.metrics.unhealthy_host_count(
+                    period=five, statistic="Maximum"), 1,
+                 "a web task failed its health check"),
+                ("ApiUnhealthy", api_target.metrics.unhealthy_host_count(
+                    period=five, statistic="Maximum"), 1,
+                 "a model API task failed its health check"),
+                ("Api5xx", api_target.metrics.http_code_target(
+                    elbv2.HttpCodeTarget.TARGET_5XX_COUNT, period=five), 5,
+                 "the model API returned 5xx errors"),
+                ("ApiSlow", api_target.metrics.target_response_time(
+                    period=five, statistic="p95"), 2,
+                 "model API p95 latency above 2 seconds")):
+            alarm = cloudwatch.Alarm(
+                self, f"Alarm{name}", metric=metric, threshold=threshold,
+                evaluation_periods=1,
+                comparison_operator=cloudwatch.ComparisonOperator
+                .GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+                alarm_description=f"ML Automation: {what}.")
+            alarm.add_alarm_action(notify)
+            alarm.add_ok_action(notify)
+
         CfnOutput(self, "Url", value=base_url)
+        CfnOutput(self, "ModelAlertsTopic", value=model_alerts.topic_arn)
+        CfnOutput(self, "OpsAlarmsTopic", value=ops_alarms.topic_arn)
         CfnOutput(self, "UserPoolId", value=pool.user_pool_id)
         CfnOutput(self, "AppKeysSecret", value=app_keys.secret_name)
         CfnOutput(self, "LogGroup", value=log_group.log_group_name)
