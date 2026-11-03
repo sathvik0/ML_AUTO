@@ -42,6 +42,35 @@ npx aws-cdk@2 deploy MlAutoWeb \
 The first deploy takes ~15 minutes (certificate validation, NAT, image
 build). Outputs: `Url`, `UserPoolId`, `AppKeysSecret`, `LogGroup`.
 
+### Cost settings
+
+Defaults suit a pilot; each is one `-c name=value` (or a `cdk.json` entry):
+
+| Setting | Default | What it changes |
+| --- | --- | --- |
+| `webCpu` / `webMemory` | 1024 / 4096 | Web task size (CPU units, MiB); memory is the limit, ~0.5 GB per 300k-row session |
+| `apiCpu` / `apiMemory` | 1024 / 2048 | Model API task size |
+| `workerCpu` / `workerMemory` | 4096 / 16384 | Training worker size |
+| `batchCpu` / `batchMemory` | 2048 / 8192 | Batch/monitoring runner size |
+| `runnerMinutes` | 60 | How often due batch jobs and monitors run; each run wakes the database |
+| `dbPauseMinutes` | 10 | Idle minutes before Aurora pauses (the first request after a pause waits ~15 s) |
+| `spot` | true | `false` runs workers and the runner on regular Fargate |
+| `containerInsights` | false | `true` adds per-task CPU/memory metrics (~$10/month) |
+| `monthlyBudget` | 300 | USD; with `opsEmail` set, AWS Budgets emails at 80% and 100% of actual spend |
+
+### Keep old images from piling up
+
+CDK pushes each build to the bootstrap ECR repository, which this stack
+doesn't own. Once per account, keep the last 20:
+
+```bash
+aws ecr put-lifecycle-policy \
+  --repository-name cdk-hnb659fds-container-assets-ACCOUNT_ID-us-east-1 \
+  --lifecycle-policy-text '{"rules":[{"rulePriority":1,"description":"Keep the last 20 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}'
+```
+
+A rollback can then go back at most 20 builds.
+
 ### Set the API keys
 
 ```bash
@@ -104,9 +133,10 @@ identity providers. (This will move into the stack once the IdP is chosen.)
 
 Jobs go to the `Jobs` SQS queue (encrypted; a dead-letter queue catches
 messages that fail five times and raises the `JobsDeadLetter` alarm). The
-`Worker` service runs `python -m worker.trainer` at 4 vCPU / 16 GB and
-scales from **0** to `maxWorkers` (4) on queued + in-flight jobs, so it
-costs nothing while idle; the first job after a quiet spell waits a minute
+`Worker` service runs `python -m worker.trainer` at 4 vCPU / 16 GB on
+Fargate Spot and scales from **0** to `maxWorkers` (4) on queued +
+in-flight jobs, so it costs nothing while idle. If Spot takes a worker
+back mid-job, the job is claimed again and restarts (up to 3 attempts); the first job after a quiet spell waits a minute
 or two for a worker to start. A worker running a job holds ECS scale-in
 protection, so neither scaling in nor a deploy stops it mid-run. Logs: the
 `worker/` prefix in the log group.
@@ -140,8 +170,9 @@ web or API tasks, API errors and p95 latency over 2 s).
 - `https://<host>/api/health` → `{"status":"ok"}` (no sign-in on `/api/*`;
   callers use project API keys created on the project page).
 - `https://<host>/api/docs` — interactive reference.
-- Batch jobs run from the `BatchSchedule` rule every 15 minutes; their logs
-  are in the same log group under the `batch/` prefix.
+- Batch jobs and monitors run from the `BatchSchedule` rule every hour
+  (`runnerMinutes`), on Fargate Spot; their logs are in the same log group
+  under the `batch/` prefix.
 
 ## Checks after a deploy
 

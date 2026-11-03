@@ -15,18 +15,29 @@ from ml_auto.web_stack import WebStack  # noqa: E402
 ACCOUNT, REGION = "123456789012", "us-east-1"
 
 
-@pytest.fixture(scope="module")
-def stacks():
-    app = cdk.App(outdir=tempfile.mkdtemp(), context={
+def _app(**context):
+    return cdk.App(outdir=tempfile.mkdtemp(), context={
         "domainName": "ml.example.com", "hostedZoneName": "example.com",
         "cognitoDomain": "ml-auto-test",
         f"hosted-zone:account={ACCOUNT}:domainName=example.com:"
         f"region={REGION}": {"Id": "/hostedzone/Z123",
-                             "Name": "example.com."}})
-    env = cdk.Environment(account=ACCOUNT, region=REGION)
-    web = WebStack(app, "MlAutoWeb", env=env)
-    dep = DeployStack(app, "MlAutoDeploy", env=env, repo="sathvik0/ML_AUTO")
+                             "Name": "example.com."}, **context})
+
+
+ENV = cdk.Environment(account=ACCOUNT, region=REGION)
+
+
+@pytest.fixture(scope="module")
+def stacks():
+    app = _app()
+    web = WebStack(app, "MlAutoWeb", env=ENV)
+    dep = DeployStack(app, "MlAutoDeploy", env=ENV, repo="sathvik0/ML_AUTO")
     return Template.from_stack(web), Template.from_stack(dep)
+
+
+def _web(**context):
+    return Template.from_stack(WebStack(_app(**context), "MlAutoWeb",
+                                        env=ENV))
 
 
 def test_every_request_signs_in(stacks):
@@ -100,7 +111,8 @@ def test_database_is_serverless_encrypted_and_protected(stacks):
         "DeletionProtection": True,
         "BackupRetentionPeriod": 7,
         "ServerlessV2ScalingConfiguration": {"MinCapacity": 0,
-                                             "MaxCapacity": 4}})
+                                             "MaxCapacity": 4,
+                                             "SecondsUntilAutoPause": 600}})
     web.has_resource("AWS::RDS::DBCluster", {
         "DeletionPolicy": "Snapshot"})
 
@@ -162,10 +174,14 @@ def test_api_and_batch_containers(stacks):
     c = _containers(web)
     assert c["api"]["Command"][:2] == ["uvicorn", "api.main:app"]
     assert c["batch"]["Command"] == ["python", "-m", "worker.batch", "--due"]
-    web.has_resource_properties("AWS::Events::Rule", {
-        "ScheduleExpression": "rate(15 minutes)",
-        "Targets": [Match.object_like({"EcsParameters": Match.object_like(
-            {"LaunchType": "FARGATE"})})]})
+    rule = next(r["Properties"] for r in web.to_json()["Resources"].values()
+                if r["Type"] == "AWS::Events::Rule")
+    # Hourly, so the database can pause between runs; on Spot.
+    assert rule["ScheduleExpression"] == "rate(1 hour)"
+    ecs_params = rule["Targets"][0]["EcsParameters"]
+    assert "LaunchType" not in ecs_params
+    assert ecs_params["CapacityProviderStrategy"] == [
+        {"CapacityProvider": "FARGATE_SPOT", "Weight": 1}]
 
 
 def test_snowflake_service_account_only_in_batch(stacks):
@@ -288,3 +304,58 @@ def test_web_sends_jobs_but_does_not_consume(stacks):
     acts = _policy_actions(web, "WebTaskTaskRole")
     assert "sqs:SendMessage" in acts and "sqs:ReceiveMessage" not in acts
     assert "sqs:ReceiveMessage" in _policy_actions(web, "WorkerTaskTaskRole")
+
+
+def _service(web, prefix):
+    return next(r["Properties"] for k, r in web.to_json()["Resources"].items()
+                if r["Type"] == "AWS::ECS::Service" and k.startswith(prefix))
+
+
+def _task_size(web, prefix):
+    t = next(r["Properties"] for k, r in web.to_json()["Resources"].items()
+             if r["Type"] == "AWS::ECS::TaskDefinition"
+             and k.startswith(prefix))
+    return t["Cpu"], t["Memory"]
+
+
+def test_workers_on_spot_and_web_on_regular_fargate(stacks):
+    web, _ = stacks
+    assert _service(web, "Worker")["CapacityProviderStrategy"] == [
+        {"CapacityProvider": "FARGATE_SPOT", "Weight": 1}]
+    assert _service(web, "Web")["LaunchType"] == "FARGATE"
+    web.has_resource_properties(
+        "AWS::ECS::ClusterCapacityProviderAssociations", {
+            "CapacityProviders": Match.array_with(["FARGATE_SPOT"])})
+
+
+def test_pilot_sizes_and_insights_off_by_default(stacks):
+    web, _ = stacks
+    assert _task_size(web, "WebTask") == ("1024", "4096")
+    assert _task_size(web, "WorkerTask") == ("4096", "16384")
+    web.has_resource_properties("AWS::ECS::Cluster", {
+        "ClusterSettings": [{"Name": "containerInsights",
+                             "Value": "disabled"}]})
+    web.resource_count_is("AWS::Budgets::Budget", 0)   # no opsEmail
+
+
+def test_settings_change_sizes_schedule_spot_and_budget():
+    web = _web(webCpu="2048", webMemory="8192", runnerMinutes="15",
+               spot="false", containerInsights="true",
+               opsEmail="ops@example.com", monthlyBudget="500")
+    assert _task_size(web, "WebTask") == ("2048", "8192")
+    rule = next(r["Properties"] for r in web.to_json()["Resources"].values()
+                if r["Type"] == "AWS::Events::Rule")
+    assert rule["ScheduleExpression"] == "rate(15 minutes)"
+    assert rule["Targets"][0]["EcsParameters"]["LaunchType"] == "FARGATE"
+    assert _service(web, "Worker")["CapacityProviderStrategy"][0][
+        "CapacityProvider"] == "FARGATE"
+    web.has_resource_properties("AWS::ECS::Cluster", {
+        "ClusterSettings": [{"Name": "containerInsights",
+                             "Value": "enabled"}]})
+    budget = next(r["Properties"] for r in web.to_json()["Resources"].values()
+                  if r["Type"] == "AWS::Budgets::Budget")
+    assert budget["Budget"]["BudgetLimit"] == {"Amount": 500, "Unit": "USD"}
+    assert sorted(n["Notification"]["Threshold"]
+                  for n in budget["NotificationsWithSubscribers"]) == [80, 100]
+    assert budget["NotificationsWithSubscribers"][0]["Subscribers"] == [
+        {"SubscriptionType": "EMAIL", "Address": "ops@example.com"}]

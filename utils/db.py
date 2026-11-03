@@ -19,6 +19,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer,
                         String, Text, UniqueConstraint, create_engine)
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column,
                             sessionmaker)
 
@@ -395,6 +396,12 @@ def _engine(target):
     kwargs = {"pool_pre_ping": True}
     if target.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+    elif os.environ.get("DB_POOL", "none") == "none":
+        # No idle connections: each unit of work connects and closes, so
+        # Aurora Serverless v2 can pause while nobody uses the app (an
+        # always-on service holding a pool would keep it running). A few
+        # milliseconds per session; DB_POOL=queue brings the pool back.
+        kwargs = {"poolclass": NullPool}
     return create_engine(target, **kwargs)
 
 

@@ -16,6 +16,15 @@ Context (cdk.json or -c):
   alertEmail        subscribe this address to model alerts (optional)
   opsEmail          subscribe this address to infrastructure alarms
   maxWorkers        most training workers at once (4)
+  runnerMinutes     how often the batch/monitoring runner starts (60)
+  dbPauseMinutes    idle minutes before Aurora pauses (10)
+  spot              false to run workers and the runner on regular
+                    Fargate instead of Fargate Spot (true)
+  webCpu / webMemory, apiCpu / apiMemory, batchCpu / batchMemory,
+  workerCpu / workerMemory   task sizes in CPU units and MiB
+                    (1024/4096, 1024/2048, 2048/8192, 4096/16384)
+  containerInsights true to turn on Container Insights (off)
+  monthlyBudget     USD a month; emails opsEmail at 80% and 100% (300)
 """
 from pathlib import Path
 
@@ -31,7 +40,7 @@ from aws_cdk import (CfnOutput, Duration, RemovalPolicy, Stack, aws_certificatem
                      aws_cloudwatch as cloudwatch,
                      aws_cloudwatch_actions as cw_actions, aws_sns as sns,
                      aws_applicationautoscaling as appscaling,
-                     aws_iam as iam, aws_sqs as sqs,
+                     aws_iam as iam, aws_sqs as sqs, aws_budgets as budgets,
                      aws_sns_subscriptions as sns_subs,
                      aws_secretsmanager as secretsmanager, aws_wafv2 as wafv2)
 from constructs import Construct
@@ -56,6 +65,11 @@ class WebStack(Stack):
             raise ValueError("Set context: " + ", ".join(missing)
                              + " (see infra/README.md)")
         base_url = f"https://{domain}"
+        spot = str(ctx("spot")).lower() != "false"
+
+        def size(name, cpu, memory):
+            return {"cpu": int(ctx(f"{name}Cpu") or cpu),
+                    "memory_limit_mib": int(ctx(f"{name}Memory") or memory)}
 
         # ── network ──────────────────────────────────────────────────────
         vpc = ec2.Vpc(
@@ -149,6 +163,8 @@ class WebStack(Stack):
             # Pauses when idle: an internal tool is often quiet for hours.
             serverless_v2_min_capacity=0,
             serverless_v2_max_capacity=float(ctx("dbMaxCapacity") or 4),
+            serverless_v2_auto_pause_duration=Duration.minutes(
+                int(ctx("dbPauseMinutes") or 10)),
             vpc=vpc, vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             storage_encrypted=True,
@@ -180,10 +196,13 @@ class WebStack(Stack):
                             route53_targets.LoadBalancerTarget(alb)))
 
         # ── the web service ──────────────────────────────────────────────
-        cluster = ecs.Cluster(self, "Cluster", vpc=vpc,
-                              container_insights_v2=ecs.ContainerInsights.ENABLED)
+        insights = str(ctx("containerInsights")).lower() == "true"
+        cluster = ecs.Cluster(
+            self, "Cluster", vpc=vpc, enable_fargate_capacity_providers=True,
+            container_insights_v2=(ecs.ContainerInsights.ENABLED if insights
+                                   else ecs.ContainerInsights.DISABLED))
         task = ecs.FargateTaskDefinition(
-            self, "WebTask", cpu=2048, memory_limit_mib=8192,
+            self, "WebTask", **size("web", 1024, 4096),
             runtime_platform=ecs.RuntimePlatform(
                 cpu_architecture=ecs.CpuArchitecture.X86_64,
                 operating_system_family=ecs.OperatingSystemFamily.LINUX))
@@ -299,7 +318,7 @@ class WebStack(Stack):
 
         # ── the model API: same image, its own service on /api/* ────────
         api_task = ecs.FargateTaskDefinition(
-            self, "ApiTask", cpu=1024, memory_limit_mib=2048,
+            self, "ApiTask", **size("api", 1024, 2048),
             runtime_platform=ecs.RuntimePlatform(
                 cpu_architecture=ecs.CpuArchitecture.X86_64,
                 operating_system_family=ecs.OperatingSystemFamily.LINUX))
@@ -343,7 +362,7 @@ class WebStack(Stack):
             "Cpu", target_utilization_percent=60,
             scale_out_cooldown=Duration.minutes(1))
 
-        # ── batch scoring: a scheduled task every 15 minutes ────────────
+        # ── batch scoring and monitoring: a scheduled task (hourly) ─────
         # The deployment's own Snowflake account, for batch jobs only — it
         # must never pre-fill the web app's form with a service password.
         snowflake_service = secretsmanager.Secret(
@@ -357,7 +376,7 @@ class WebStack(Stack):
                     '"warehouse": "", "database": "", "schema": ""}'),
                 generate_string_key="password"))
         batch_task = ecs.FargateTaskDefinition(
-            self, "BatchTask", cpu=2048, memory_limit_mib=8192,
+            self, "BatchTask", **size("batch", 2048, 8192),
             runtime_platform=ecs.RuntimePlatform(
                 cpu_architecture=ecs.CpuArchitecture.X86_64,
                 operating_system_family=ecs.OperatingSystemFamily.LINUX))
@@ -378,20 +397,32 @@ class WebStack(Stack):
                                      description="ML Automation batch jobs")
         database.connections.allow_default_port_from(batch_sg,
                                                      "batch jobs")
-        events.Rule(
+        # Hourly by default: each run wakes the database, so a 15-minute
+        # runner would keep Aurora from ever pausing.
+        schedule = events.Rule(
             self, "BatchSchedule",
             description="Run due ML Automation batch jobs",
-            schedule=events.Schedule.rate(Duration.minutes(15)),
+            schedule=events.Schedule.rate(Duration.minutes(
+                int(ctx("runnerMinutes") or 60))),
             targets=[events_targets.EcsTask(
                 cluster=cluster, task_definition=batch_task,
                 launch_type=ecs.LaunchType.FARGATE,
                 subnet_selection=ec2.SubnetSelection(
                     subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
                 security_groups=[batch_sg])])
+        if spot:
+            # The EcsTask target can't take a capacity provider strategy
+            # yet; set it on the rule (it replaces the launch type).
+            cfn_rule = schedule.node.default_child
+            cfn_rule.add_property_override(
+                "Targets.0.EcsParameters.CapacityProviderStrategy",
+                [{"CapacityProvider": "FARGATE_SPOT", "Weight": 1}])
+            cfn_rule.add_property_deletion_override(
+                "Targets.0.EcsParameters.LaunchType")
 
         # ── training workers: scale from zero on the queue ───────────────
         worker_task = ecs.FargateTaskDefinition(
-            self, "WorkerTask", cpu=4096, memory_limit_mib=16384,
+            self, "WorkerTask", **size("worker", 4096, 16384),
             runtime_platform=ecs.RuntimePlatform(
                 cpu_architecture=ecs.CpuArchitecture.X86_64,
                 operating_system_family=ecs.OperatingSystemFamily.LINUX))
@@ -406,6 +437,11 @@ class WebStack(Stack):
             self, "Worker", cluster=cluster, task_definition=worker_task,
             desired_count=0, min_healthy_percent=0, max_healthy_percent=200,
             circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
+            # Spot can take a worker back at two minutes' notice; the job is
+            # then claimed again by another worker (see logic/jobs.py).
+            capacity_provider_strategies=[ecs.CapacityProviderStrategy(
+                capacity_provider="FARGATE_SPOT" if spot else "FARGATE",
+                weight=1)],
             vpc_subnets=ec2.SubnetSelection(
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS))
         data_bucket.grant_read_write(worker_task.task_role)
@@ -557,6 +593,27 @@ class WebStack(Stack):
                 alarm_description=f"ML Automation: {what}.")
             alarm.add_alarm_action(notify)
             alarm.add_ok_action(notify)
+
+        # ── a monthly budget: email at 80% and 100% of actual spend ─────
+        ops_email = ctx("opsEmail")
+        if ops_email:
+            budgets.CfnBudget(
+                self, "Budget",
+                budget=budgets.CfnBudget.BudgetDataProperty(
+                    budget_name="ml-auto-monthly", budget_type="COST",
+                    time_unit="MONTHLY",
+                    budget_limit=budgets.CfnBudget.SpendProperty(
+                        amount=float(ctx("monthlyBudget") or 300),
+                        unit="USD")),
+                notifications_with_subscribers=[
+                    budgets.CfnBudget.NotificationWithSubscribersProperty(
+                        notification=budgets.CfnBudget.NotificationProperty(
+                            notification_type="ACTUAL",
+                            comparison_operator="GREATER_THAN",
+                            threshold=pct, threshold_type="PERCENTAGE"),
+                        subscribers=[budgets.CfnBudget.SubscriberProperty(
+                            subscription_type="EMAIL", address=ops_email)])
+                    for pct in (80, 100)])
 
         CfnOutput(self, "Url", value=base_url)
         CfnOutput(self, "ModelAlertsTopic", value=model_alerts.topic_arn)

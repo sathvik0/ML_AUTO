@@ -86,7 +86,7 @@ token the ALB forwards.
 | Target group | Deregistration delay | 300 s | Draining a task ends live sessions. |
 | Listener | Idle timeout | 3600 s | The 60 s default drops users who are reading. |
 | Service | Min healthy | 100% | Never remove capacity mid-session. |
-| Task | Size | 2 vCPU / 8 GB to start | Memory is the limit (~0.5 GB per 300k-row session). |
+| Task | Size | 1 vCPU / 4 GB to start (`webCpu` / `webMemory`) | Memory is the limit (~0.5 GB per 300k-row session). |
 | Autoscaling | Target | 60% memory | Scale out freely, in rarely. |
 
 ## Roadmap mapping
@@ -95,14 +95,14 @@ token the ALB forwards.
 | --- | --- | --- |
 | 1 | SSO and roles | Container image, CDK stack (VPC, ECS, ALB, Cognito, WAF, secrets, logout), app-side identity and permissions. |
 | 2 | Persistence | Aurora PostgreSQL Serverless v2 (scales to zero, encrypted, 7-day backups) and a KMS-encrypted, versioned S3 bucket: projects, autosaved datasets/steps/choices/runs, a model registry with versions, per-project sharing (owner/editor/viewer). Schema managed by Alembic. |
-| 3 | Deployment | Stages (none → staging → production → archived) with four-eyes approval for production; a FastAPI model API service on `/api/*` (project API keys, hashed; 1 vCPU / 2 GB, CPU autoscaling); batch scoring jobs (project dataset, upload or Snowflake → storage or Snowflake, cron schedules) run by a scheduled Fargate task every 15 minutes with its own Snowflake service account. |
-| 4 | Monitoring | Monitors check a production model against newer data on a schedule (run by the same 15-minute task): drift on its own features and, when outcomes are present, accuracy against its test score → ok / warning / alert. Alerts go to an SNS topic (email; Slack or Teams through AWS Chatbot) and an optional per-monitor Slack/Teams webhook (allow-listed hosts only). Optional retraining registers a **staging** version — production still needs approval — and never stacks more than one waiting. Platform alarms (5xx, unhealthy tasks, API latency) go to a separate ops topic. |
-| 5 | Scale | Training runs as a background job: the web app records it (the database is the source of truth) and sends its id to an encrypted SQS queue with a dead-letter queue; a worker service (4 vCPU / 16 GB) scales from zero on queued + in-flight jobs, claims each job atomically, reports progress (also its heartbeat and how it learns of a cancel), and protects its task from scale-in while it works. Jobs interrupted by a lost worker restart automatically (up to 3 attempts); failed or cancelled jobs can be retried. Locally a thread pool stands in for the queue. |
+| 3 | Deployment | Stages (none → staging → production → archived) with four-eyes approval for production; a FastAPI model API service on `/api/*` (project API keys, hashed; 1 vCPU / 2 GB, CPU autoscaling); batch scoring jobs (project dataset, upload or Snowflake → storage or Snowflake, cron schedules) run by a scheduled Fargate Spot task (hourly by default) with its own Snowflake service account. |
+| 4 | Monitoring | Monitors check a production model against newer data on a schedule (run by the same scheduled task): drift on its own features and, when outcomes are present, accuracy against its test score → ok / warning / alert. Alerts go to an SNS topic (email; Slack or Teams through AWS Chatbot) and an optional per-monitor Slack/Teams webhook (allow-listed hosts only). Optional retraining registers a **staging** version — production still needs approval — and never stacks more than one waiting. Platform alarms (5xx, unhealthy tasks, API latency) go to a separate ops topic. |
+| 5 | Scale | Training runs as a background job: the web app records it (the database is the source of truth) and sends its id to an encrypted SQS queue with a dead-letter queue; a worker service (4 vCPU / 16 GB, Fargate Spot) scales from zero on queued + in-flight jobs, claims each job atomically, reports progress (also its heartbeat and how it learns of a cancel), and protects its task from scale-in while it works. Jobs interrupted by a lost worker restart automatically (up to 3 attempts); failed or cancelled jobs can be retried. Locally a thread pool stands in for the queue. |
 | 6 | Governance | An append-only, SHA-256 hash-chained audit trail in Aurora, written in the same transaction as each action (a PostgreSQL trigger refuses UPDATE/DELETE; `prev_hash` is unique so the chain cannot fork; history survives project deletion; also logged for a SIEM). Fairness checks per group of sensitive attributes on out-of-sample predictions (four-fifths rule, TPR/FPR gaps; MAE ratio and bias gap for regression), with owner acceptance and a reason; a per-project policy can require a passing or accepted check before production. Admins read the whole log and verify the chain; owners see their project's activity. |
 
 ## Cost (us-east-1, idle-to-light use, indicative)
 
-ALB ~$20/month · 1 web task (2 vCPU/8 GB) ~$70/month · NAT gateway ~$35/month
-plus data · Cognito free up to 10k monthly users (Plus tier for advanced
-security) · WAF ~$10/month · Aurora Serverless v2 from ~$45/month at minimum
-capacity (item 2). VPC endpoints cut NAT data charges for S3 and ECR.
+≈ $185–195/month for a pilot; the breakdown is in
+[deployment-plan.md](deployment-plan.md). Aurora only pauses when nothing
+holds a connection: the app opens one per unit of work (no pool), and the
+runner wakes it hourly. VPC endpoints cut NAT data charges for S3 and ECR.

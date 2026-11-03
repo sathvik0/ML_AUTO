@@ -171,3 +171,14 @@ def test_delete_removes_files(sample, tmp_path):
 def test_storage_refuses_paths_outside():
     with pytest.raises(storage.StorageError):
         storage.put("../../escape.txt", b"x")
+
+
+def test_postgres_keeps_no_idle_connections(monkeypatch):
+    # Idle pooled connections would stop Aurora Serverless from pausing.
+    pg = "postgresql+psycopg://u:p@db.invalid/x"
+    db._engine.cache_clear()
+    assert type(db.engine(pg).pool).__name__ == "NullPool"
+    monkeypatch.setenv("DB_POOL", "queue")
+    db._engine.cache_clear()
+    assert type(db.engine(pg).pool).__name__ == "QueuePool"
+    db._engine.cache_clear()
