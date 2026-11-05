@@ -728,10 +728,11 @@ def _prepare(df, prof):
                       steps=len(steps) + 1, rows_before=len(df),
                       rows_after=rows, columns_after=cols)
             st.rerun()
-    st.caption("Fills here use every row, so a test row helps choose them; "
-               "the configure page's fills learn from the training rows "
-               "only. Rows dropped here are not scored. A file scored later "
-               "gets the column steps; its rows are all kept.")
+    st.caption("Fills and caps here use every row, so a test row helps "
+               "choose them; the configure page's fills and caps learn from "
+               "the training rows only. Rows dropped here are not scored. A "
+               "file scored later gets the column steps; its rows are all "
+               "kept.")
     if steps:
         code = ml_eval.prep_script(steps)
         with st.expander("Python code for this preparation"):

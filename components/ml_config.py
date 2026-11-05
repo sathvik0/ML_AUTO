@@ -66,6 +66,9 @@ ENCODING_HELP = {
               "learnt from the training rows only and cross-fitted so a row "
               "never sees its own target. Suits many-category columns.",
 }
+CAPS = {"none": "Off",
+        "pct": "At the 1st and 99th percentiles",
+        "iqr": "At the quartile fences (1.5 × IQR)"}
 RARE = {0.0: "Off", 0.005: "Below 0.5%", 0.01: "Below 1%", 0.02: "Below 2%",
         0.05: "Below 5%"}
 PCA = {0: "Off", 2: "2", 3: "3", 5: "5", 10: "10"}
@@ -371,6 +374,13 @@ def _prep(task, df, target):
                + (" Gradient boosting reads categories natively unless "
                   "they are target encoded."
                   if prep["cat_encoding"] != "target" else ""))
+    k1, k2 = st.columns([1, 3])
+    prep["cap"] = _choice("Cap extreme numbers", CAPS, f"{PREFIX}cap", "none",
+                          k1)
+    k2.caption("Levels learnt from the training rows of each fit, never the "
+               "test rows, and fixed in the saved model. Helps linear "
+               "models, neighbours and neural networks; trees and boosting "
+               "are unaffected by it.")
     flags_key = f"{PREFIX}missing_flags"
     _seed(flags_key, False)
     prep["missing_flags"] = st.checkbox(

@@ -1100,7 +1100,8 @@ def _cross_validate(recipe, X, y, splits, classes, positive, ticker, what):
     oof_p = np.zeros((len(y), len(classes))) if classes else None
     per_fold = []
     for i, (tr, va) in enumerate(splits, 1):
-        pipe = ml_recipe.build_pipeline(recipe)
+        pipe = ml_recipe.build_pipeline(ml_recipe.with_caps(recipe,
+                                                            X.iloc[tr]))
         pipe.fit(X.iloc[tr], ml_recipe.fit_labels(recipe, y[tr], classes))
         pred, proba = predict(task, pipe, X.iloc[va], classes)
         oof[va] = pred
@@ -1164,6 +1165,7 @@ def _fit_supervised(m, base, data, splits, family, metric, ticker):
     elif splits:
         cv = _cross_validate(recipe, Xtr, ytr, splits, classes, positive,
                              ticker, label)
+    recipe = ml_recipe.with_caps(recipe, Xtr)
     pipe = ml_recipe.build_pipeline(recipe)
     t1 = time.perf_counter()
     pipe.fit(Xtr, ml_recipe.fit_labels(recipe, ytr, classes))
@@ -1357,8 +1359,9 @@ def _train_clustering(df, config, ticker):
     X = ml_recipe.prepare_features(df, base["numeric"], base["categorical"])
     # One preprocessing pass for every model in the run: clustering has no
     # held-out rows, so all of them share the same fitted transform.
-    first = {**base, "model": config["models"][0]["key"],
-             "params": dict(config["models"][0]["params"])}
+    first = ml_recipe.with_caps(
+        {**base, "model": config["models"][0]["key"],
+         "params": dict(config["models"][0]["params"])}, X)
     front = ml_recipe.build_pipeline(first)[:-1]
     ticker.say("Preparing the features")
     z = front.fit_transform(X)
@@ -1366,7 +1369,8 @@ def _train_clustering(df, config, ticker):
     for m in config["models"]:
         key = m["key"]
         label = model_label("clustering", key)
-        recipe = {**base, "model": key, "params": dict(m["params"])}
+        # The shared preparation's cap levels go with every model's recipe.
+        recipe = {**first, "model": key, "params": dict(m["params"])}
         try:
             est = ml_recipe.build_estimator(recipe)
             t1 = time.perf_counter()

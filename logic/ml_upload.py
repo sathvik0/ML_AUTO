@@ -71,6 +71,9 @@ _NUMPY = {("numpy", "ndarray"), ("numpy", "dtype"),
           ("numpy.random._pickle", "__randomstate_ctor"),
           ("numpy.random.bit_generator", "SeedSequence"),
           ("numpy.random.bit_generator", "__pyx_unpickle_SeedSequence"),
+          # The app's own cap step (ml_recipe.with_caps): a pure function
+          # of arrays, held by a FunctionTransformer.
+          ("numpy", "clip"),
           ("joblib.numpy_pickle", "NumpyArrayWrapper")}
 # Inside the estimator packages, beyond the estimator classes themselves:
 # modules whose classes are model parts (a tree's arrays, a loss, a link, a
