@@ -37,7 +37,8 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder, TargetEncoder,
+from sklearn.preprocessing import (FunctionTransformer, MinMaxScaler,
+                                   OneHotEncoder, TargetEncoder,
                                    OrdinalEncoder, PowerTransformer,
                                    RobustScaler, StandardScaler)
 from sklearn.svm import SVC, SVR
@@ -219,6 +220,31 @@ def native_categories(recipe):
     return recipe["model"] in NATIVE_CATEGORIES and encoding(recipe) != "target"
 
 
+def with_caps(recipe, X):
+    """The recipe with its cap levels learnt from `X`, the rows about to be
+    fitted: each fold's training rows in cross-validation, the training rows
+    for the final model. So no test or validation row helps set a cap.
+    "pct" caps at the 1st and 99th percentiles, "iqr" at 1.5 interquartile
+    ranges beyond the quartiles; a gap stays a gap."""
+    how = recipe["prep"].get("cap", "none")
+    if how == "none" or not recipe["numeric"]:
+        return recipe
+    low, high = [], []
+    for c in recipe["numeric"]:
+        v = pd.to_numeric(X[c], errors="coerce").to_numpy(dtype="float64")
+        v = v[np.isfinite(v)]
+        if not len(v):
+            lo, hi = -np.inf, np.inf
+        elif how == "pct":
+            lo, hi = np.quantile(v, [0.01, 0.99])
+        else:
+            q1, q3 = np.quantile(v, [0.25, 0.75])
+            lo, hi = q1 - 1.5 * (q3 - q1), q3 + 1.5 * (q3 - q1)
+        low.append(float(lo))
+        high.append(float(hi))
+    return {**recipe, "caps": {"low": low, "high": high}}
+
+
 def build_preprocessor(recipe):
     prep = recipe["prep"]
     numeric, categorical = list(recipe["numeric"]), list(recipe["categorical"])
@@ -258,6 +284,14 @@ def build_preprocessor(recipe):
         how = prep.get("num_missing", "none")
         flags = bool(prep.get("missing_flags"))
         steps = []
+        caps = recipe.get("caps")
+        if caps:
+            # numpy's own clip with fixed levels: a saved model needs
+            # nothing but scikit-learn and numpy to load.
+            steps.append(("cap", FunctionTransformer(
+                np.clip, feature_names_out="one-to-one",
+                kw_args={"a_min": np.asarray(caps["low"]),
+                         "a_max": np.asarray(caps["high"])})))
         if how != "none":
             steps.append(("impute", SimpleImputer(
                 strategy="constant" if how == "zero" else how,

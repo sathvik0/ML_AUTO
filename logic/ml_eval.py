@@ -936,6 +936,11 @@ def model_card(run, res) -> str:
               + ("most frequent" if prep.get("cat_missing") == "most_frequent"
                  else "their own category"),
               f"- Scaling: {prep.get('scale')}",
+              "- Extreme numbers capped: " + {
+                  "pct": "at the 1st and 99th percentiles of the training "
+                         "rows",
+                  "iqr": "at the training rows' quartile fences (1.5 × IQR)"
+              }.get(prep.get("cap", "none"), "no"),
               f"- Rare categories grouped below: "
               f"{100 * float(prep.get('rare_share') or 0):g}% of rows"]
     if task == "regression":
@@ -1110,7 +1115,7 @@ def scorer(metric, codes):
 
 
 def fit(recipe, X, y, groups):
-    pipe = build_pipeline(recipe)
+    pipe = build_pipeline(with_caps(recipe, X))
     search = SEARCHES.get(recipe["model"])
     if not search:
         return pipe.fit(X, y)
@@ -1159,7 +1164,8 @@ def main(path):
     out = df.copy()
     if base["task"] == "clustering":
         for recipe in RECIPES:
-            codes = np.asarray(build_pipeline(recipe).fit_predict(X))
+            codes = np.asarray(build_pipeline(with_caps(recipe, X))
+                               .fit_predict(X))
             names = cluster_names(codes)
             print("%s: %d clusters" % (recipe["model"], len(names) - 1))
             if recipe["model"] == BEST:
