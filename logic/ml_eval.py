@@ -969,6 +969,11 @@ def model_card(run, res) -> str:
                      f"cross-validation")
     if base.get("balance"):
         lines.append("- Classes balanced by weight")
+    resampled = {"smote": "oversampled with SMOTE",
+                 "under": "undersampled"}.get(base.get("resample"))
+    if resampled:
+        lines.append(f"- Training rows {resampled} at each fit (the test "
+                     f"rows never were)")
     lines += ["", "## Results on the test rows" if task != "clustering"
               else "## Cluster quality", "", "| Metric | Value |",
               "| --- | --- |"] + metric_lines(run, res)
@@ -1118,7 +1123,7 @@ def fit(recipe, X, y, groups):
     pipe = build_pipeline(with_caps(recipe, X))
     search = SEARCHES.get(recipe["model"])
     if not search:
-        return pipe.fit(X, y)
+        return pipe.fit(*resample(recipe, X, y))
     log_scale = recipe["task"] == "regression" and recipe["prep"].get(
         "log_target")
     prefix = "model__regressor__" if log_scale else "model__"
@@ -1134,6 +1139,10 @@ def fit(recipe, X, y, groups):
                                    random_state=recipe["seed"])
     found.fit(X, y, groups=groups)
     print("  %s: best settings %s" % (recipe["model"], found.best_params_))
+    if (recipe.get("resample") or "none") != "none":
+        # Settings chosen on the rows as they are (the search's folds
+        # cannot resample), then the final model fitted on rebalanced rows.
+        return found.best_estimator_.fit(*resample(recipe, X, y))
     return found.best_estimator_
 
 

@@ -852,7 +852,18 @@ def base_recipe(config, rule=None):
             "validation": dict(config.get("validation") or {}),
             "seed": int(config.get("seed", 42)),
             "balance": bool(config.get("balance")),
+            "resample": (config.get("resample") or "none")
+            if config["task"] == "classification" else "none",
             "model": None, "params": {}}
+
+
+IMBALANCED = 0.20       # the smallest class below this share of rows
+
+
+def smallest_share(y):
+    """The smallest class's share of the rows with a target, or None."""
+    counts = pd.Series(y).dropna().astype(str).value_counts()
+    return float(counts.min() / counts.sum()) if len(counts) > 1 else None
 
 
 def _classes(y):
@@ -1102,7 +1113,8 @@ def _cross_validate(recipe, X, y, splits, classes, positive, ticker, what):
     for i, (tr, va) in enumerate(splits, 1):
         pipe = ml_recipe.build_pipeline(ml_recipe.with_caps(recipe,
                                                             X.iloc[tr]))
-        pipe.fit(X.iloc[tr], ml_recipe.fit_labels(recipe, y[tr], classes))
+        Xf, yf = ml_recipe.resample(recipe, X.iloc[tr], y[tr])
+        pipe.fit(Xf, ml_recipe.fit_labels(recipe, yf, classes))
         pred, proba = predict(task, pipe, X.iloc[va], classes)
         oof[va] = pred
         if proba is not None:
@@ -1168,7 +1180,8 @@ def _fit_supervised(m, base, data, splits, family, metric, ticker):
     recipe = ml_recipe.with_caps(recipe, Xtr)
     pipe = ml_recipe.build_pipeline(recipe)
     t1 = time.perf_counter()
-    pipe.fit(Xtr, ml_recipe.fit_labels(recipe, ytr, classes))
+    Xf, yf = ml_recipe.resample(recipe, Xtr, ytr)
+    pipe.fit(Xf, ml_recipe.fit_labels(recipe, yf, classes))
     fit_s = time.perf_counter() - t1
     ticker.step(f"{label}: final fit")
     t2 = time.perf_counter()
