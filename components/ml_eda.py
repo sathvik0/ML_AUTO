@@ -40,6 +40,7 @@ KINDS = {
     "as_category": "Read a number as categories",
     "as_number": "Read text as numbers",
     "fill": "Fill gaps",
+    "date_parts": "Turn dates into numbers",
 }
 
 
@@ -653,7 +654,40 @@ def _builder(df, prof):
             if not value:
                 return None, "Type the value to fill with."
         return {"kind": kind, "column": col, "value": value}, None
+    if kind == "date_parts":
+        col = pick("Date column", _dates_left(df, prof), "date_col")
+        if col is None:
+            return None, ("No date columns left. A column whose values read "
+                          "as dates (2024-03-31, 31/03/2024) shows here.")
+        return ml_prep.date_step(df, col)
     return None, "Choose a step."
+
+
+def _dates_left(df, prof):
+    """Date columns that have no date features yet."""
+    return [c for c in prof.loc[prof["kind"] == "date", "column"]
+            if c in df.columns and f"{c}_month" not in df.columns]
+
+
+def _date_offer(df, prof, steps):
+    """One click for every date column: models cannot read a date whole."""
+    left = _dates_left(df, prof)
+    if not left:
+        return
+    st.info(f"Date column{'' if len(left) == 1 else 's'} found: "
+            f"{', '.join(left)}. A model cannot read a date as it is; its "
+            f"year, month, weekday, days since the earliest date and the "
+            f"like can predict.")
+    if st.button("Turn dates into numbers", key="ml_e_dates"):
+        new = []
+        for c in left:
+            step, problem = ml_prep.date_step(df, c)
+            if step:
+                new.append(step)
+        set_steps(steps + new)
+        log.event(_log, "ml_prep_step_added", kind="date_parts",
+                  steps=len(steps) + len(new))
+        st.rerun()
 
 
 @st.fragment
@@ -665,6 +699,7 @@ def _prepare(df, prof):
     _steps_list(steps)
     if auth.denied("edit"):
         return
+    _date_offer(df, prof, steps)
     st.markdown("**Add a step**")
     if "ml_run" in ss:
         st.caption("A new step clears the trained models: they learned from "

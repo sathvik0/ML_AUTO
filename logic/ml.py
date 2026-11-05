@@ -37,7 +37,7 @@ from sklearn.metrics import (accuracy_score, average_precision_score,
 from sklearn.model_selection import ParameterGrid, ParameterSampler
 from sklearn.pipeline import Pipeline
 
-from logic import ml_recipe, schema
+from logic import ml_prep, ml_recipe, schema
 from utils import log
 
 _log = log.get("ml")
@@ -612,6 +612,16 @@ def profile(df) -> pd.DataFrame:
         elif uniq <= 1:
             note, use, kind = "Constant: carries no information.", False, \
                 "constant"
+        elif ml_prep.looks_like_date(s):
+            # Read whole, a date is a category that never repeats in a new
+            # file; its parts (month, weekday, days since) are what predict.
+            done = f"{col}_month" in df.columns
+            note, use, kind = ((f"A date: its features ({col}_month, "
+                                f"{col}_days_since, …) are used instead.")
+                               if done else
+                               ("A date: Explore & prepare → Prepare → Turn "
+                                "dates into numbers makes features from it."),
+                               False, "date")
         elif role == "id" or (uniq == n and n > MIN_LABELLED and (
                 dtype == "categorical"
                 or pd.api.types.is_integer_dtype(s))):
