@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 from components import (export_page, ml_evaluate, ml_summary, project_panel,
                         snowflake_panel)
 from logic import ml, ml_eval
-from utils import guard, log
+from utils import auth, guard, log
 from utils.constants import ML_PALETTE
 from utils.file_loader import load_file
 
@@ -345,8 +345,7 @@ def _targeting(run, res, df):
          "Rows targeted (cumulative)")} | {
         "Lift": st.column_config.NumberColumn(format="%.2f")})
     st.markdown("**Cut-off: who the model flags**")
-    t = st.slider("Flag rows with a probability of at least", 0.01, 0.99,
-                  0.50, 0.01, key=f"ml_r_threshold_{res['key']}")
+    t = _cutoff(run, res)
     stats = ml_eval.at_threshold(hit, score, t)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Precision", "n/a" if stats["precision"] is None
@@ -366,6 +365,77 @@ def _targeting(run, res, df):
          "Not flagged": [stats["fn"], stats["tn"]]},
         index=[f"Actual {run['positive']}", "Actual other"]),
         width="content")
+    _keep_cutoff(run, res, t)
+
+
+def _cutoff_rows(run, res):
+    """(positions, what they are) for choosing a cut-off: the training rows'
+    out-of-fold scores when there were folds, so the test rows stay a fair
+    check of the choice; the test rows otherwise."""
+    oof = run["split"] == "train (out of fold)"
+    if oof.any():
+        return np.flatnonzero(oof), "training rows (out of fold)"
+    return ml_eval.rows(run, "test"), "test rows"
+
+
+def _cutoff(run, res):
+    """The slider, starting at the model's saved cut-off, and the finder
+    that moves it."""
+    key = f"ml_r_threshold_{res['key']}"
+    if key not in st.session_state:
+        st.session_state[key] = float(res.get("threshold") or 0.50)
+    pos, where = _cutoff_rows(run, res)
+    c1, c2, c3, c4 = st.columns([2.2, 1, 1, 1], vertical_alignment="bottom")
+    goal = c1.selectbox("Find the cut-off with", list(ml_eval.THRESHOLD_GOALS),
+                        format_func=ml_eval.THRESHOLD_GOALS.get,
+                        key=f"ml_r_goal_{res['key']}")
+    costs = (1.0, 1.0)
+    if goal == "cost":
+        costs = (c2.number_input(f"Cost of a missed {run['positive']}",
+                                 min_value=0.0, value=5.0, step=1.0,
+                                 key=f"ml_r_miss_{res['key']}"),
+                 c3.number_input("Cost of a false alarm", min_value=0.0,
+                                 value=1.0, step=1.0,
+                                 key=f"ml_r_alarm_{res['key']}"))
+
+    def find():
+        hit = ml_eval.truth(run, pos) == run["positive"]
+        st.session_state[key] = ml_eval.best_threshold(
+            hit, ml_eval.positive_score(run, res, pos), goal, *costs)
+
+    c4.button("Find it", on_click=find, width="stretch",
+              key=f"ml_r_find_{res['key']}")
+    st.caption(f"Found on the {where}" + (
+        "; the figures below are on the test rows, which it never saw."
+        if where.startswith("training") else
+        "; with no folds there is nothing else to choose on, so the test "
+        "figures below flatter the choice a little."))
+    return st.slider("Flag rows with a probability of at least", 0.01, 0.99,
+                     step=0.01, key=key)
+
+
+def _keep_cutoff(run, res, t):
+    """Save the cut-off with the model: the file registered or downloaded
+    from now on, the model API, batch jobs and monitoring all flag at it."""
+    saved = res.get("threshold")
+    now = (f"The model flags at {saved:.2f}." if saved is not None else
+           "The model flags the likelier class (0.50) until a cut-off is "
+           "saved.")
+    if saved is not None and abs(saved - t) < 1e-9:
+        st.caption(now + " Registered versions and downloads use it.")
+        return
+    if not auth.can("edit"):
+        st.caption(now)
+        return
+    c1, c2 = st.columns([1.3, 3], vertical_alignment="center")
+    if c1.button(f"Use {t:.2f} for this model", type="primary",
+                 key=f"ml_r_keep_{res['key']}"):
+        res["threshold"] = float(t)
+        project_panel.save_threshold(run, res)
+        log.event(_log, "ml_threshold_saved", model=res["key"], threshold=t)
+        st.rerun()
+    c2.caption(now + " A version already registered keeps its own; "
+                     "register again to use a new one.")
 
 
 def _multiclass_performance(run, res):
