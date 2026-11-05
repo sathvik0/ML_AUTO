@@ -66,6 +66,42 @@ def _column_script(code, df):
     return pd.Series(list(value), index=df.index)
 
 
+def _dates(series, fmt):
+    """A column as timestamps; what does not read as a date becomes a gap.
+    Time zones are turned into UTC, then dropped, so every file agrees."""
+    if not pd.api.types.is_datetime64_any_dtype(series):
+        series = label_text(series)
+        fmt = fmt or "mixed"
+    else:
+        fmt = None
+    d = pd.to_datetime(series, errors="coerce", utc=True, format=fmt)
+    return d.dt.tz_localize(None)
+
+
+def date_parts(series, fmt, reference):
+    """{part: numbers} for one date column; a gap stays a gap in every
+    part. Months, weekdays and hours also come as a point on a circle (sine
+    and cosine), so December sits next to January."""
+    d = _dates(series, fmt)
+    ok = d.notna()
+    month, weekday, hour = d.dt.month, d.dt.weekday, d.dt.hour
+    turn = 2 * np.pi
+    parts = {
+        "year": d.dt.year, "month": month, "day": d.dt.day,
+        "weekday": weekday, "is_weekend": (weekday >= 5).astype("float64"),
+        "hour": hour,
+        "days_since": (d - pd.Timestamp(reference)).dt.total_seconds()
+        / 86400,
+        "month_sin": np.sin(turn * (month - 1) / 12),
+        "month_cos": np.cos(turn * (month - 1) / 12),
+        "weekday_sin": np.sin(turn * weekday / 7),
+        "weekday_cos": np.cos(turn * weekday / 7),
+        "hour_sin": np.sin(turn * hour / 24),
+        "hour_cos": np.cos(turn * hour / 24)}
+    return {k: pd.Series(v, index=series.index, dtype="float64").where(ok)
+            for k, v in parts.items()}
+
+
 def bin_labels(edges):
     """One label per bin; the first and last bins are open-ended, so every
     value in a later file lands in one of them."""
@@ -128,6 +164,10 @@ def apply_step(df, step, n=1, rows=True):
         labels = bin_labels(edges)
         cut = pd.cut(_numbers(df[column]), edges, labels=labels, right=False)
         out[step["into"]] = cut.astype(object).where(cut.notna(), np.nan)
+    elif kind == "date_parts":
+        parts = date_parts(df[column], step.get("format"), step["reference"])
+        for part in step["parts"]:
+            out[f"{column}_{part}"] = parts[part]
     elif kind == "as_category":
         out[column] = label_text(df[column])
     elif kind == "as_number":
@@ -222,6 +262,10 @@ def describe(step):
     if kind == "bin":
         return (f"{step['into']}: {c} cut into "
                 f"{len(step['edges']) - 1} bins at fixed values")
+    if kind == "date_parts":
+        return (f"Date features from {c}: "
+                + ", ".join(f"{c}_{p}" for p in step["parts"])
+                + f" (days since {step['reference']})")
     if kind == "as_category":
         return f"Read {c} as categories"
     if kind == "as_number":
@@ -280,3 +324,77 @@ def effect(df, step):
     """(rows, columns) after the step, without keeping the result."""
     out = apply_step(df, step)
     return len(out), out.shape[1]
+
+
+DATE_SAMPLE = 500           # values read to decide a column is dates
+DATE_SHARE = 0.9            # share of them that must read as dates
+# A date written out: 2024-03-31, 31/03/2024, 3.31.24, 2024-03-31T09:30.
+_DATE_TEXT = r"^\s*\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}([ T]\d{1,2}:\d{2}.*)?\s*$"
+
+
+def _read_share(text, fmt):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        d = pd.to_datetime(text, errors="coerce", utc=True, format=fmt)
+    return float(d.notna().mean())
+
+
+def looks_like_date(series):
+    """A datetime column, or text that reads as dates (numbers such as
+    20240331 or a year on its own are left as numbers)."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return True
+    if pd.api.types.is_numeric_dtype(series) or \
+            pd.api.types.is_bool_dtype(series):
+        return False
+    text = series.dropna().astype(str).head(DATE_SAMPLE)
+    if len(text) == 0:
+        return False
+    if text.str.match(_DATE_TEXT).mean() < DATE_SHARE:
+        return False
+    return _read_share(text, "mixed") >= DATE_SHARE
+
+
+def date_format(series):
+    """The one format the column is written in, or None when it mixes
+    several (then each value is read on its own, which is slower). Day
+    first wins only when it reads more values (31/03 settles it); when
+    both read every value, month first is taken."""
+    import warnings
+
+    from pandas.tseries.api import guess_datetime_format
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return None
+    text = label_text(series).dropna().head(DATE_SAMPLE)
+    found = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")      # "day first was asked for"
+        for value in text.head(50):
+            for dayfirst in (False, True):
+                fmt = guess_datetime_format(value, dayfirst=dayfirst)
+                if fmt and fmt not in found:
+                    found.append(fmt)
+    best, share = None, _read_share(text, "mixed")
+    for fmt in found:
+        s = _read_share(text, fmt)
+        if s > share or (best is None and s >= share):
+            best, share = fmt, s
+    return best
+
+
+def date_step(df, column):
+    """(step, problem): a date column's parts, the reference date for
+    "days since" fixed now (the earliest date), and the hour only when the
+    column records a time of day."""
+    fmt = date_format(df[column])
+    d = _dates(df[column], fmt).dropna()
+    if len(d) < 2:
+        return None, f"{column} has too few values that read as dates."
+    parts = ["year", "month", "day", "weekday", "is_weekend", "days_since",
+             "month_sin", "month_cos", "weekday_sin", "weekday_cos"]
+    if (d != d.dt.normalize()).any():
+        parts += ["hour", "hour_sin", "hour_cos"]
+    return {"kind": "date_parts", "column": column, "format": fmt,
+            "reference": d.min().normalize().strftime("%Y-%m-%d"),
+            "parts": parts}, None
