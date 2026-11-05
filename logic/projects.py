@@ -329,6 +329,22 @@ def save_run(user, project_id, run, dataset_id=None):
         return r.id
 
 
+def set_threshold(user, project_id, run_id, run, model_key, threshold):
+    """A stored run with a model's cut-off changed: rewritten in place, so a
+    project reopened later registers the model with the same cut-off."""
+    with db.session() as s:
+        _need(s, user, project_id, "editor")
+        r = s.get(db.Run, run_id)
+        if r is None or r.project_id != project_id:
+            raise AccessDenied("That run is not in this project.")
+        buf = io.BytesIO()
+        joblib.dump(run, buf, compress=3)
+        storage.put(r.object_key, buf.getvalue())
+        audit.record(s, user, "run.threshold", project_id, "run", r.id,
+                     model=model_key, threshold=threshold)
+        s.commit()
+
+
 def list_runs(user, project_id):
     with db.session() as s:
         _need(s, user, project_id, "viewer")

@@ -268,6 +268,22 @@ def _create_and_stay(name):
 
 
 # ── the results page ────────────────────────────────────────────────────
+def save_threshold(run, res):
+    """After a model's cut-off changes: rewrite the stored run, so the
+    project keeps it. Nothing to do when the run is not stored (yet)."""
+    rid, p = run.get("_project_run_id"), current()
+    if not (available() and p and rid and can_edit()):
+        return
+    try:
+        payload = dict(run)
+        if payload.get("frame") is None:
+            payload["frame"] = _ss()["ml_df"]
+        projects.set_threshold(auth.user(), p["id"], rid, payload,
+                               res["key"], res.get("threshold"))
+    except Exception as e:
+        _fail("Saving the cut-off", e)
+
+
 def register(run, res):
     """Register the model on screen as a new version in the project."""
     p = current()

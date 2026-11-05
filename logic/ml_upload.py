@@ -321,6 +321,7 @@ def _from_bundle(bundle):
             "positive": bundle.get("positive"),
             "cluster_names": bundle.get("cluster_names"),
             "prep_steps": list(bundle.get("prep_steps") or []),
+            "threshold": bundle.get("threshold"),
             "trained": bundle.get("created"),
             "sklearn": bundle.get("sklearn")}
 
@@ -701,6 +702,8 @@ def predict_only(df, info, columns, task, prof=None, by_position=False):
                 classes = [str(c) for c in ml_recipe.label_text(
                     pd.Series(np.asarray(getattr(model, "classes_", []))))]
             pred, proba = ml.predict(task, model, X, classes)
+            pred = ml.with_cutoff(pred, proba, classes, info.get("positive"),
+                                  info.get("threshold"))
             out[_free("ML_Prediction", taken)] = pred
             if proba is not None:
                 for j, c in enumerate(classes):

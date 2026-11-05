@@ -1060,6 +1060,23 @@ def _proba(pipe, X, classes):
     return out / np.where(total > 0, total, 1.0)
 
 
+def flag(proba, classes, positive, threshold):
+    """Two-class labels at a chosen cut-off: the class of interest where its
+    probability reaches `threshold`, the other class elsewhere."""
+    j = classes.index(positive)
+    other = classes[1 - j]
+    return np.where(proba[:, j] >= threshold, positive, other).astype(object)
+
+
+def with_cutoff(pred, proba, classes, positive, threshold):
+    """`pred`, or the labels at the model's saved cut-off when it has one
+    (two classes only; without one, the likelier class wins)."""
+    if threshold is None or proba is None or len(classes) != 2 \
+            or positive not in classes:
+        return pred
+    return flag(proba, list(classes), positive, float(threshold))
+
+
 def score_predictions(task, y_true, pred, proba, classes, positive):
     if task == "classification":
         return classification_metrics(y_true, pred, proba, classes, positive)

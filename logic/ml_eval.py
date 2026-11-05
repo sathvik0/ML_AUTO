@@ -126,6 +126,39 @@ def calibration(hit, score, bins=10) -> pd.DataFrame:
             .reset_index(drop=True))
 
 
+THRESHOLD_GOALS = {"f1": "Best F1 (precision and recall together)",
+                   "youden": "Best balance of hits and false alarms "
+                             "(Youden's J)",
+                   "cost": "Lowest cost of mistakes"}
+
+
+def best_threshold(hit, score, goal="f1", miss_cost=1.0, alarm_cost=1.0):
+    """The cut-off (0.01 to 0.99, in hundredths, as the slider moves) that
+    does best on `goal` for these rows: F1, Youden's J (recall minus the
+    false-alarm rate), or the lowest total cost of missed positives and
+    false alarms."""
+    hit = np.asarray(hit, dtype=bool)
+    score = np.asarray(score, dtype="float64")
+    p = int(hit.sum())
+    n = len(hit) - p
+    cuts = np.round(np.arange(0.01, 1.0, 0.01), 2)
+    # Rows flagged at each cut-off, counted at once from the sorted scores.
+    order = np.sort(score[hit]), np.sort(score[~hit])
+    tp = p - np.searchsorted(order[0], cuts, side="left")
+    fp = n - np.searchsorted(order[1], cuts, side="left")
+    fn = p - tp
+    with np.errstate(divide="ignore", invalid="ignore"):
+        if goal == "f1":
+            value = np.where(tp > 0, 2 * tp / (2 * tp + fp + fn), 0.0)
+        elif goal == "youden":
+            value = (tp / max(p, 1)) - (fp / max(n, 1))
+        elif goal == "cost":
+            value = -(fn * float(miss_cost) + fp * float(alarm_cost))
+        else:
+            raise ValueError(f"Unknown goal: {goal}")
+    return float(cuts[int(np.argmax(value))])
+
+
 def at_threshold(hit, score, threshold) -> dict:
     """The confusion matrix and its rates when flagging score >= threshold."""
     hit = np.asarray(hit, dtype=bool)
@@ -729,7 +762,7 @@ def prediction_columns(run, res, taken=(), detail=True) -> pd.DataFrame:
     if run["task"] == "clustering":
         add("ML_Cluster", res["labels"])
         return pd.DataFrame(cols)
-    add("ML_Prediction", res["pred"])
+    add("ML_Prediction", predictions(run, res))
     if run["task"] == "classification":
         if len(run["classes"]) == 2:
             add("ML_Probability", positive_score(run, res, slice(None)))
@@ -751,6 +784,14 @@ def prediction_columns(run, res, taken=(), detail=True) -> pd.DataFrame:
                              split)
         add("ML_Split", split)
     return pd.DataFrame(cols)
+
+
+def predictions(run, res):
+    """The predicted labels for every row, at the saved cut-off if any."""
+    if run["task"] != "classification":
+        return res["pred"]
+    return ml.with_cutoff(res["pred"], res.get("proba"), run["classes"],
+                          run.get("positive"), res.get("threshold"))
 
 
 def with_predictions(run, res, df, detail=True) -> pd.DataFrame:
@@ -860,6 +901,9 @@ def model_card(run, res) -> str:
              f"- Target: {describe_target(run)}"]
     if run.get("positive"):
         lines.append(f"- Class of interest: {run['positive']}")
+        if res.get("threshold") is not None:
+            lines.append(f"- Flagged when its probability is at least "
+                         f"{res['threshold']:.2f} (chosen cut-off)")
     if task == "classification":
         counts = pd.Series(truth(run, rows(run, "labelled"))).value_counts()
         lines.append("- Classes: " + ", ".join(
@@ -1409,7 +1453,10 @@ def model_bytes(run, res) -> bytes:
               "classes": run["classes"], "positive": run["positive"],
               "cluster_names": res.get("names"), "sklearn": run["sklearn"],
               "created": run["created"],
-              "prep_steps": list(run.get("prep_steps") or [])}
+              "prep_steps": list(run.get("prep_steps") or []),
+              # The cut-off chosen on the results page, if any: every place
+              # that scores with this file flags at it.
+              "threshold": res.get("threshold")}
     buf = io.BytesIO()
     joblib.dump(bundle, buf)
     return buf.getvalue()
@@ -1441,7 +1488,8 @@ def zip_bundle(run, res, df, importance=None) -> bytes:
         if res.get("search") is not None:
             z.writestr("tuning.csv", res["search"].to_csv(index=False))
         z.writestr("settings.json", json.dumps(
-            {"recipe": res["recipe"], "positive": run.get("positive")},
+            {"recipe": res["recipe"], "positive": run.get("positive"),
+             "threshold": res.get("threshold")},
             default=str, indent=2))
     return buf.getvalue()
 
@@ -1529,6 +1577,8 @@ def score_file(run, res, df_new):
             codes, index=out.index).map(names).to_numpy(dtype=object)
         return out, notes
     pred, proba = ml.predict(run["task"], pipe, X, run["classes"])
+    pred = ml.with_cutoff(pred, proba, run["classes"], run.get("positive"),
+                          res.get("threshold"))
     out[_free("ML_Prediction", set(out.columns))] = pred
     if proba is not None:
         if len(run["classes"]) == 2:
