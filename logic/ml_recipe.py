@@ -34,7 +34,8 @@ from sklearn.model_selection import (GroupKFold, GroupShuffleSplit, KFold,
                                      StratifiedGroupKFold, StratifiedKFold,
                                      train_test_split)
 from sklearn.naive_bayes import GaussianNB
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.neighbors import (KNeighborsClassifier, KNeighborsRegressor,
+                               NearestNeighbors)
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (FunctionTransformer, MinMaxScaler,
@@ -243,6 +244,83 @@ def with_caps(recipe, X):
         low.append(float(lo))
         high.append(float(hi))
     return {**recipe, "caps": {"low": low, "high": high}}
+
+
+SMOTE_NEIGHBOURS = 5
+
+
+def resample(recipe, X, y):
+    """The rows a model is fitted on, rebalanced: "smote" adds synthetic
+    rows to every class smaller than the largest, "under" keeps a random
+    sample of every class the size of the smallest. Only ever given the rows
+    being fitted (a fold's training rows, or the training rows), so no row
+    being scored is copied or dropped. Seeded, so a run repeats exactly.
+
+    SMOTE here is SMOTE-NC: a new row lies between a real row and one of
+    its nearest neighbours of the same class on every number, and takes the
+    commonest value among those neighbours for every category. Distance
+    reads the numbers scaled to unit spread and counts a differing category
+    as the median spread, so mixed columns weigh fairly.
+    """
+    how = recipe.get("resample") or "none"
+    if how == "none" or recipe["task"] != "classification":
+        return X, y
+    y = np.asarray(y, dtype=object)
+    rng = np.random.default_rng(recipe.get("seed", 0))
+    labels, counts = np.unique(y.astype(str), return_counts=True)
+    if len(labels) < 2:
+        return X, y
+    if how == "under":
+        keep = np.concatenate([
+            rng.choice(np.flatnonzero(y.astype(str) == c), counts.min(),
+                       replace=False) for c in labels])
+        keep.sort()
+        return X.iloc[keep], y[keep]
+    numeric = [c for c in recipe["numeric"] if c in X.columns]
+    categorical = [c for c in recipe["categorical"] if c in X.columns]
+    num = X[numeric].to_numpy(dtype="float64")
+    centre = np.nanmedian(num, axis=0) if numeric else np.zeros(0)
+    spread = np.nanstd(num, axis=0) if numeric else np.zeros(0)
+    spread = np.where(np.isfinite(spread) & (spread > 0), spread, 1.0)
+    filled = np.where(np.isnan(num), centre, num) / spread
+    # Scaled numbers have a spread of one, so a differing category (two
+    # indicator columns apart) adds one squared unit, as SMOTE-NC asks.
+    cats = X[categorical].astype(object).where(X[categorical].notna(),
+                                               "(missing)")
+    dummies = (pd.get_dummies(cats).to_numpy(dtype="float64") / np.sqrt(2)
+               if categorical else np.zeros((len(X), 0)))
+    space = np.hstack([filled, dummies])
+    new_X, new_y = [], []
+    for c, n in zip(labels, counts):
+        need = counts.max() - n
+        rows = np.flatnonzero(y.astype(str) == c)
+        if need == 0 or n < 2:
+            continue
+        k = min(SMOTE_NEIGHBOURS, n - 1)
+        nn = NearestNeighbors(n_neighbors=k + 1).fit(space[rows])
+        near = nn.kneighbors(space[rows], return_distance=False)[:, 1:]
+        base = rng.integers(0, n, need)
+        pick = near[base, rng.integers(0, k, need)]
+        gap = rng.random((need, 1))
+        a, b = num[rows[base]], num[rows[pick]]
+        values = np.where(np.isnan(a) | np.isnan(b), a, a + gap * (b - a))
+        part = pd.DataFrame(values, columns=numeric)
+        for col in categorical:
+            codes, uniques = pd.factorize(X[col].to_numpy(dtype=object)[rows],
+                                          use_na_sentinel=False)
+            votes = codes[near[base]]                # need × k
+            # The commonest code in each row; a tie goes to the nearest.
+            agree = (votes[:, :, None] == votes[:, None, :]).sum(axis=2)
+            won = votes[np.arange(need), agree.argmax(axis=1)]
+            part[col] = np.asarray(uniques, dtype=object)[won]
+        new_X.append(part[list(X.columns)])
+        new_y.append(np.full(need, y[rows[0]], dtype=object))
+    if not new_X:
+        return X, y
+    out = pd.concat([X.reset_index(drop=True)]
+                    + [p.astype(X.dtypes.to_dict()) for p in new_X],
+                    ignore_index=True)
+    return out, np.concatenate([y] + new_y)
 
 
 def build_preprocessor(recipe):

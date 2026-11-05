@@ -69,6 +69,9 @@ ENCODING_HELP = {
 CAPS = {"none": "Off",
         "pct": "At the 1st and 99th percentiles",
         "iqr": "At the quartile fences (1.5 × IQR)"}
+RESAMPLE = {"none": "Off",
+            "smote": "Oversample the smaller classes (SMOTE)",
+            "under": "Undersample the larger classes"}
 RARE = {0.0: "Off", 0.005: "Below 0.5%", 0.01: "Below 1%", 0.02: "Below 2%",
         0.05: "Below 5%"}
 PCA = {0: "Off", 2: "2", 3: "3", 5: "5", 10: "10"}
@@ -407,6 +410,16 @@ def _prep(task, df, target):
     return prep
 
 
+def _smallest_share(df, task, target, rule):
+    """The smallest class's share of the rows, for a classification target."""
+    if task != "classification":
+        return None
+    recipe = {"task": task, "target": target,
+              "target_rule": ({"at_least": ml.resolve_rule(
+                  df, target, rule)["at_least"]} if rule else None)}
+    return ml.smallest_share(ml_recipe.target_values(df, recipe))
+
+
 def _validation(df, prof, task, target, rule, classes):
     if task == "clustering":
         st.markdown("#### Number of clusters")
@@ -428,7 +441,7 @@ def _validation(df, prof, task, target, rule, classes):
     c1, c2, c3 = st.columns(3)
     share_key = f"{PREFIX}test_share"
     _seed(share_key, 20)
-    share = c1.slider("Test share (%)", 10, 40, step=5, key=share_key)
+    test_share = c1.slider("Test share (%)", 10, 40, step=5, key=share_key)
     folds = _choice("Cross-validation on the training rows", FOLDS,
                     f"{PREFIX}folds", 3 if len(df) > LARGE_FILE else 5, c2)
     groups = [c for c, t, u in zip(prof["column"], prof["type"],
@@ -444,9 +457,15 @@ def _validation(df, prof, task, target, rule, classes):
                    f"test shows how the model does on {group} values it has "
                    f"never seen.")
     family = ml.metric_family(task, len(classes) if classes else None)
-    m_key = f"{PREFIX}metric_{family}"
+    share = _smallest_share(df, task, target, rule)
+    rare = share is not None and share < ml.IMBALANCED
+    # A rare class starts on PR AUC (two classes) and on class weights:
+    # accuracy and ROC AUC both look good on a model that ignores it.
+    suffix = "_rare" if rare else ""
+    m_key = f"{PREFIX}metric_{family}{suffix}"
     options = list(ml.SELECTABLE[family])
-    _seed(m_key, options[0], options)
+    _seed(m_key, "average_precision" if rare and family == "binary"
+          else options[0], options)
     c4, c5, c6 = st.columns(3)
     metric = c4.selectbox("Choose the best model by", options, key=m_key,
                           format_func=lambda k: ml.metric_label(family, k))
@@ -454,14 +473,22 @@ def _validation(df, prof, task, target, rule, classes):
     _seed(seed_key, 42)
     seed = c5.number_input("Random seed", min_value=0, max_value=1_000_000,
                            step=1, key=seed_key)
-    stratify, balance = False, False
+    stratify, balance, resample = False, False, "none"
     if task == "classification":
         strat_key = f"{PREFIX}stratify"
         _seed(strat_key, True)
         stratify = c6.checkbox("Same class shares in training and test",
                                key=strat_key, disabled=group != NO_GROUP)
-        bal_key = f"{PREFIX}balance"
-        _seed(bal_key, False)
+        if rare:
+            st.info(f"The smallest class is {share:.1%} of the rows (below "
+                    f"{ml.IMBALANCED:.0%}), so this starts on "
+                    + ("PR AUC to choose the best model, " if family ==
+                       "binary" else "")
+                    + "weights that balance the classes, and offers "
+                      "resampling. The cut-off on the results page matters "
+                      "most on a file like this.")
+        bal_key = f"{PREFIX}balance{suffix}"
+        _seed(bal_key, rare)
         balance = st.checkbox("Balance the classes by weight", key=bal_key)
         if balance:
             st.caption("Gives the rarer class more weight in training. "
@@ -469,10 +496,22 @@ def _validation(df, prof, task, target, rule, classes):
                        "boosting, LightGBM and support vector machines "
                        "support it; the others, XGBoost among them, train as "
                        "usual.")
-    return ({"test_size": share / 100, "folds": int(folds),
+        r1, r2 = st.columns([1.3, 3])
+        resample = _choice("Resample the training rows", RESAMPLE,
+                           f"{PREFIX}resample", "none", r1)
+        r2.caption("Only rows being fitted are resampled (each fold's "
+                   "training rows, then the training rows), never the rows "
+                   "a score is measured on. SMOTE adds rows between "
+                   "neighbours of the same class; undersampling drops rows "
+                   "of the larger classes at random."
+                   + (" With weights on too, the smaller class counts "
+                      "twice over." if balance and resample != "none"
+                      else ""))
+    return ({"test_size": test_share / 100, "folds": int(folds),
              "stratify": bool(stratify) and group == NO_GROUP,
              "group": None if group == NO_GROUP else group},
-            {"seed": int(seed), "metric": metric}, balance, None)
+            {"seed": int(seed), "metric": metric, "resample": resample},
+            balance, None)
 
 
 def _grid_default(spec):
@@ -674,6 +713,7 @@ def render():
               "validation": validation,
               "seed": (extra or {}).get("seed", 42),
               "metric": (extra or {}).get("metric"), "balance": balance,
+              "resample": (extra or {}).get("resample", "none"),
               "models": models, "k_scan": k_scan}
     st.divider()
     errors = ml.validate(df, config)
