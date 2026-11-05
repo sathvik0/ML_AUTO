@@ -18,6 +18,7 @@ import importlib
 
 import numpy as np
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.cluster import DBSCAN, AgglomerativeClustering, KMeans
 from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.decomposition import PCA
@@ -25,7 +26,8 @@ from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.ensemble import (ExtraTreesClassifier, ExtraTreesRegressor,
                               HistGradientBoostingClassifier,
                               HistGradientBoostingRegressor,
-                              RandomForestClassifier, RandomForestRegressor)
+                              RandomForestClassifier, RandomForestRegressor,
+                              StackingClassifier, StackingRegressor)
 from sklearn.impute import MissingIndicator, SimpleImputer
 from sklearn.linear_model import (ElasticNet, Lasso, LinearRegression,
                                   LogisticRegression, Ridge)
@@ -123,6 +125,8 @@ def answers_in_codes(model):
     does (it refuses text labels), and so does a model that says so. A model
     trained elsewhere on the labels 1, 2 and 3 answers in those labels."""
     est = model.steps[-1][1] if hasattr(model, "steps") else model
+    if isinstance(est, CalibratedClassifierCV):
+        est = est.estimator           # calibrated: answers as the model does
     return bool(getattr(est, "answers_in_codes", False)) or \
         type(est).__module__.split(".")[0] == "xgboost"
 
@@ -392,8 +396,33 @@ def build_preprocessor(recipe):
     return ColumnTransformer(parts, sparse_threshold=0.0)
 
 
+STACK = "stack"
+STACK_FOLDS = 3
+
+
+def _stack(recipe):
+    """Several models fitted on the same prepared columns, and a simple
+    model on top that learns how far to trust each one from their
+    out-of-fold predictions. Members read the columns the stack's encoding
+    gives, so none reads categories natively."""
+    members = [(m["model"], build_estimator({**recipe, "model": m["model"],
+                                             "params": m["params"],
+                                             "categorical": []}))
+               for m in recipe["params"]["members"]]
+    seed = recipe.get("seed", 0)
+    if recipe["task"] == "classification":
+        return StackingClassifier(
+            members, final_estimator=LogisticRegression(max_iter=2000),
+            cv=StratifiedKFold(STACK_FOLDS, shuffle=True, random_state=seed))
+    return StackingRegressor(members, final_estimator=Ridge(),
+                             cv=KFold(STACK_FOLDS, shuffle=True,
+                                      random_state=seed))
+
+
 def build_estimator(recipe):
     task, model = recipe["task"], recipe["model"]
+    if model == STACK:
+        return _stack(recipe)
     cls, fixed = ESTIMATORS[(task, model)]
     cls = _resolve(cls)
     args = dict(fixed)
@@ -423,6 +452,13 @@ def build_pipeline(recipe):
         model = TransformedTargetRegressor(regressor=model, func=np.log1p,
                                            inverse_func=np.expm1,
                                            check_inverse=False)
+    how = recipe.get("calibration") or "none"
+    if recipe["task"] == "classification" and how != "none":
+        # Probabilities refitted to match how often each class happens:
+        # "sigmoid" (Platt) for small files, "isotonic" for large ones. Each
+        # of three folds fits the model on two thirds of the rows and the
+        # calibration on the rest; the three are averaged.
+        model = CalibratedClassifierCV(model, method=how, cv=3)
     steps.append(("model", model))
     return Pipeline(steps)
 

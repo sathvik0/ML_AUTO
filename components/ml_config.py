@@ -616,6 +616,40 @@ def _duration(seconds) -> str:
     return f"{minutes} minute{'' if minutes == 1 else 's'}"
 
 
+CALIBRATE = {"none": "Off", "sigmoid": "Platt scaling (small files)",
+             "isotonic": "Isotonic (large files)"}
+STACK = {0: "Off", **{n: f"Stack the best {n}" for n in ml.STACK_TOP}}
+
+
+def _combine(task, folds):
+    """Calibration (classification) and a stack of the best models."""
+    if task == "clustering":
+        return {}
+    st.markdown("#### Combine and calibrate")
+    c1, c2 = st.columns(2)
+    stack = _choice("Stack the best models", STACK, f"{PREFIX}stack", 0, c1)
+    if stack and not folds:
+        c1.caption("Needs cross-validation: the best models are picked by "
+                   "their cross-validated score, never the test rows.")
+    elif stack:
+        c1.caption("Fits the best models by cross-validated score together "
+                   "under a simple model that weighs them; it joins the "
+                   "leaderboard and wins only if it scores better. Takes "
+                   "about four times as long as its members. XGBoost is "
+                   "left out of stacks.")
+    calibration = "none"
+    if task == "classification":
+        calibration = _choice("Calibrate probabilities", CALIBRATE,
+                              f"{PREFIX}calibration", "none", c2)
+        if calibration != "none":
+            c2.caption("Makes a probability of 0.3 mean three in ten: worth "
+                       "it when probabilities are read as risks or summed "
+                       "into forecasts. Rankings, and so AUC, barely move. "
+                       "After resampling it calibrates to the resampled "
+                       "shares.")
+    return {"stack": int(stack), "calibration": calibration}
+
+
 def _plan_line(config, n_rows):
     p = ml.plan(config)
     n = len(config["models"])
@@ -707,6 +741,7 @@ def render():
     validation, extra, balance, k_scan = _validation(df, prof, task, target,
                                                      rule, classes)
     models = _models(task, len(df))
+    combine = _combine(task, validation.get("folds"))
     config = {"task": task, "target": target, "positive": positive,
               "target_rule": rule, "numeric": numeric,
               "categorical": categorical, "prep": prep,
@@ -714,7 +749,7 @@ def render():
               "seed": (extra or {}).get("seed", 42),
               "metric": (extra or {}).get("metric"), "balance": balance,
               "resample": (extra or {}).get("resample", "none"),
-              "models": models, "k_scan": k_scan}
+              "models": models, "k_scan": k_scan, **combine}
     st.divider()
     errors = ml.validate(df, config)
     for e in errors:

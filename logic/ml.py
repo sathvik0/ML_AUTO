@@ -312,9 +312,25 @@ MODELS = {
 BASELINE_LABEL = "Baseline (no model)"
 
 
+STACK = ml_recipe.STACK
+STACK_TOP = (2, 3, 4, 5)        # how many of the best models a stack holds
+# XGBoost learns class codes, not labels; inside a stack it would see labels.
+STACK_LEAVES_OUT = ("xgboost",)
+
+
+def reads_gaps(res):
+    """Whether a trained model reads a missing number as it is."""
+    if res["key"] == STACK:
+        return all(m["model"] in GAP_MODELS
+                   for m in res["params"]["members"])
+    return res["key"] in GAP_MODELS
+
+
 def model_label(task, key):
     if key == BASELINE:
         return BASELINE_LABEL
+    if key == STACK:
+        return "Stack of the top models"
     return MODELS[task][key]["label"]
 
 
@@ -854,6 +870,8 @@ def base_recipe(config, rule=None):
             "balance": bool(config.get("balance")),
             "resample": (config.get("resample") or "none")
             if config["task"] == "classification" else "none",
+            "calibration": (config.get("calibration") or "none")
+            if config["task"] == "classification" else "none",
             "model": None, "params": {}}
 
 
@@ -1142,7 +1160,7 @@ def _better(family, metric, a, b) -> bool:
 def _fit_supervised(m, base, data, splits, family, metric, ticker):
     task = base["task"]
     key = m["key"]
-    label = model_label(task, key)
+    label = m.get("label") or model_label(task, key)
     params = dict(m.get("params") or {})
     recipe = {**base, "model": key, "params": params}
     if key == BASELINE:
@@ -1314,6 +1332,16 @@ def _train_supervised(df, config, ticker):
             log.event(_log, "ml_model_failed", level=logging.ERROR,
                       exc_info=True, model=m["key"], task=task, ref=ref)
             results.append(_failed(m["key"], task, ref))
+    stack = _stack_member_list(results, config, family, metric, bool(splits))
+    if stack:
+        try:
+            results.append(_fit_supervised(stack, base, data, splits, family,
+                                           metric, ticker))
+        except Exception:
+            ref = log.incident_id()
+            log.event(_log, "ml_model_failed", level=logging.ERROR,
+                      exc_info=True, model=STACK, task=task, ref=ref)
+            results.append(_failed(STACK, task, ref))
     split = np.full(len(df), "no target", dtype=object)
     split[data["train_rows"]] = ("train (out of fold)" if splits
                                  else "train (in sample)")
@@ -1326,6 +1354,29 @@ def _train_supervised(df, config, ticker):
             "n_unlabelled": len(unl_rows), "folds": len(splits),
             "results": results,
             "best": _best_supervised(results, family, metric, bool(splits))}
+
+
+def _stack_member_list(results, config, family, metric, by_cv):
+    """The stack to fit, as a model entry, or None: the best `top` models by
+    cross-validated score, each with the settings it won with. Needs folds,
+    so the choice never looks at the test rows."""
+    top = int(config.get("stack") or 0)
+    if top < 2 or not by_cv:
+        return None
+    ranked = [r for r in results
+              if not r.get("error") and r["key"] != BASELINE
+              and r["key"] not in STACK_LEAVES_OUT and r.get("cv")
+              and _mean(r["cv"][metric]) is not None]
+    ranked.sort(key=lambda r: _mean(r["cv"][metric]),
+                reverse=higher_is_better(family, metric))
+    chosen = ranked[:top]
+    if len(chosen) < 2:
+        return None
+    return {"key": STACK, "search": None,
+            "label": "Stack: " + " + ".join(r["label"] for r in chosen),
+            "params": {"members": [{"model": r["key"],
+                                    "params": dict(r["params"])}
+                                   for r in chosen]}}
 
 
 def _best_supervised(results, family, metric, by_cv):

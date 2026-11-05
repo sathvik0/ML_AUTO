@@ -428,6 +428,9 @@ SHAP_CHUNK = 2_000
 SHAP_TOLERANCE = 1e-3
 
 
+CALIBRATION = {"sigmoid": "Platt scaling", "isotonic": "isotonic"}
+
+
 def shap_problem(run, res):
     """Why SHAP cannot explain this model here, or None when it can."""
     missing = ml.package_problem("shap")
@@ -440,6 +443,10 @@ def shap_problem(run, res):
                 "step between the file and the model is known; for an "
                 "uploaded model, permutation importance shows what drives "
                 "it.")
+    if (res["recipe"].get("calibration") or "none") != "none":
+        return ("Calibration averages three copies of the model behind a "
+                "curve that SHAP's exact explainers cannot read; "
+                "permutation importance shows what drives it.")
     if res["key"] not in SHAP_TREES + SHAP_LINEAR:
         return (f"SHAP is computed exactly for trees, forests, boosting and "
                 f"linear models; for {res['label']}, permutation importance "
@@ -708,10 +715,22 @@ def settings_text(task, res) -> str:
     if res["key"] == ml.BASELINE:
         return ("Always the most common class" if task == "classification"
                 else "Always the average")
-    specs = {p["name"]: p for p in ml.MODELS[task][res["key"]]["params"]}
-    parts = [f"{specs[k]['label']} {ml.show_value(specs[k], v)}"
-             for k, v in res["params"].items() if k in specs]
-    return ", ".join(parts) or "Defaults"
+    if res["key"] == ml.STACK:
+        text = "; ".join(
+            f"{ml.model_label(task, m['model'])} ("
+            + settings_text(task, {"key": m["model"], "params": m["params"]})
+            + ")" for m in res["params"]["members"]) +             "; combined by a " + ("logistic regression" if task ==
+                                  "classification" else "ridge regression")
+    else:
+        specs = {p["name"]: p
+                 for p in ml.MODELS[task][res["key"]]["params"]}
+        parts = [f"{specs[k]['label']} {ml.show_value(specs[k], v)}"
+                 for k, v in res["params"].items() if k in specs]
+        text = ", ".join(parts) or "Defaults"
+    how = (res.get("recipe") or {}).get("calibration") or "none"
+    if how != "none":
+        text += f"; probabilities calibrated ({CALIBRATION[how]})"
+    return text
 
 
 # The verdict's yardstick: a metric whose chance value does not depend on the
@@ -1567,7 +1586,7 @@ def score_file(run, res, df_new):
                          f"model never saw ({examples}), scored as unknown.")
     gaps = {c: int(n) for c, n in X[numeric].isna().sum().items() if n}
     filled = res["recipe"]["prep"].get("num_missing", "none") != "none"
-    if gaps and not filled and res["key"] not in ml.GAP_MODELS \
+    if gaps and not filled and not ml.reads_gaps(res) \
             and not run.get("external"):
         # Trained with no fill on a file without gaps: it has nothing to put
         # in one, and the model would raise on the first.
