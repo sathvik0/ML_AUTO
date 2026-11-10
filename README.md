@@ -6,9 +6,15 @@ Snowflake table.
 
 ## Flow
 
-A process bar at the top of every page shows the steps in order, highlights
-the one you are on, ticks the ones before it and greys out any that cannot
-be opened yet (Results before training). Click a step to go to it.
+A sidebar moves between the areas of the app: **Home** (your projects,
+approvals waiting, monitors to check, recent runs), **Data**, the current
+**Analysis**, the open project's sections (Runs, Models, Monitoring & batch,
+Access & activity) and, for admins, the Audit log. The top bar says where
+you are, whether the work is saved, and who is signed in.
+
+Inside an analysis, a row of tabs shows the steps in order, underlines the
+one you are on, ticks the ones before it and greys out any that cannot be
+opened yet (Results before training). Click a step to go to it.
 
 1. **Data** — upload a file, load a Snowflake table or query, or try the
    sample (below).
@@ -123,8 +129,8 @@ with a **View as** switcher in the account menu to see each role's view.
 
 ## Projects
 
-Work is saved in **projects**. Create one on the start page (or save the
-current work from the 📁 chip at the top), and while it is open everything
+Work is saved in **projects**. Create one on Home (or save the
+current work from the project menu at the top), and while it is open everything
 saves itself: the loaded dataset, the preparation steps, the configure
 choices and every training run. The project page lists the runs (open any
 of them on the results page again) and the **model registry** — register a
@@ -246,8 +252,10 @@ python -m venv .venv
 ## Layout
 
 ```
-app.py                     entry point: start page and page routing
-components/nav.py          process bar shown on every page
+app.py                     entry point: home, data page and page routing
+components/shell.py        sidebar and top bar around every page
+components/home.py         home dashboard (logic/overview.py: its numbers)
+components/nav.py          the steps of an analysis, as tabs
 components/ml_eda.py       Explore & prepare
 components/ml_features.py  Feature engineering (AI ideas, AI column builder)
 components/voice_input.py  optional voice prompt for it

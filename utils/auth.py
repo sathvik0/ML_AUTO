@@ -262,7 +262,8 @@ def account_menu():
     u = user()
     if not u:
         return
-    with st.popover(f"👤 {u['name']} · {u['role']}", width="stretch"):
+    with st.popover(f"{u['name']} · {u['role']}", width="stretch",
+                    icon=":material/account_circle:"):
         st.markdown(f"**{u['name']}**  \n{u['email']}")
         st.caption(f"Role: {u['role']}"
                    + (f" · groups: {', '.join(u['groups'])}"
@@ -271,10 +272,6 @@ def account_menu():
             st.caption("Development sign-in (AUTH_MODE=dev).")
             st.session_state.setdefault(DEV_ROLE_KEY, u["role"])
             st.selectbox("View as", ROLES, key=DEV_ROLE_KEY)
-        if can("admin") and st.button("Audit log", width="stretch",
-                                      key="auth_audit"):
-            st.session_state["page"] = "ml_audit"
-            st.rerun()
         url = os.environ.get("SIGN_OUT_URL")
         if url:
             st.link_button("Sign out", url, width="stretch")
