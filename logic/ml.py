@@ -796,7 +796,7 @@ def search_combinations(model) -> int:
     grid = 1
     for values in search["space"].values():
         grid *= max(1, len(values))
-    if search["mode"] == "random":
+    if search["mode"] in ("random", "bayes"):
         return min(int(search.get("n_iter", 10)), grid)
     return grid
 
@@ -1119,10 +1119,11 @@ def predict(task, pipe, X, classes):
     return np.asarray(pipe.predict(X), dtype="float64"), None
 
 
-def _cross_validate(recipe, X, y, splits, classes, positive, ticker, what):
+def _cross_validate(recipe, X, y, splits, classes, positive, ticker, what,
+                    on_fold=None):
     """Out-of-fold predictions and per-fold metrics, on fixed folds shared by
     every model and setting in the run — so their scores compare like for
-    like."""
+    like. `on_fold(i, scores so far)` may stop it early by raising."""
     task = recipe["task"]
     oof = (np.empty(len(y), dtype=object) if task == "classification"
            else np.full(len(y), np.nan))
@@ -1139,6 +1140,8 @@ def _cross_validate(recipe, X, y, splits, classes, positive, ticker, what):
             oof_p[va] = proba
         per_fold.append(score_predictions(task, y[va], pred, proba, classes, positive))
         ticker.step(f"{what}: fold {i} of {len(splits)}")
+        if on_fold is not None:
+            on_fold(i, per_fold)
     scores = {k: [f[k] for f in per_fold] for k in per_fold[0]}
     return {"scores": scores, "oof": oof, "oof_proba": oof_p}
 
@@ -1172,7 +1175,14 @@ def _fit_supervised(m, base, data, splits, family, metric, ticker):
     search_rows, cv = None, None
     t0 = time.perf_counter()
     search = m.get("search")
-    if search and splits:
+    mode = (search or {}).get("mode")
+    if mode == "bayes" and package_problem("optuna"):
+        mode = "random"                # same number of settings, at random
+    if search and splits and mode == "bayes":
+        best, search_rows = _bayes_search(m, recipe, params, data, splits,
+                                          family, metric, ticker, label)
+        _, recipe, cv = best
+    elif search and splits:
         space = {k: list(v) for k, v in search["space"].items() if v}
         cands = (list(ParameterGrid(space)) if search["mode"] == "grid" else
                  list(ParameterSampler(space, n_iter=search_combinations(m),
@@ -1244,6 +1254,71 @@ def _fit_supervised(m, base, data, splits, family, metric, ticker):
             "test": test, "pipeline": pipe, "pred": pred_all,
             "proba": proba_all, "fit_s": fit_s, "predict_s": predict_s,
             "total_s": time.perf_counter() - t0, "error": None}
+
+
+def _bayes_search(m, recipe, params, data, splits, family, metric, ticker,
+                  label):
+    """Settings chosen by Optuna's TPE sampler, which learns from the scores
+    of the settings already tried where to look next. Every setting is
+    scored by the same cross-validation as grid and random search; one that
+    trails the median of earlier settings after a fold is stopped early,
+    and the search ends at `n_iter` settings or `seconds`, whichever comes
+    first. Seeded, though a time limit makes the count depend on speed.
+
+    Returns ((score, recipe, cv) of the best, the rows of the search table).
+    """
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    search = m["search"]
+    space = {k: list(v) for k, v in search["space"].items() if v}
+    total = search_combinations(m)
+    up = higher_is_better(family, metric)
+    study = optuna.create_study(
+        direction="maximize" if up else "minimize",
+        sampler=optuna.samplers.TPESampler(seed=recipe.get("seed", 0)),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=5,
+                                           n_warmup_steps=1))
+    tried, rows, best = {}, [], []
+    classes, positive = data["classes"], data["positive"]
+
+    def objective(trial):
+        cand = {k: trial.suggest_categorical(k, v) for k, v in space.items()}
+        key = repr(sorted(cand.items(), key=lambda kv: kv[0]))
+        if key in tried:                   # the sampler came back to one
+            return tried[key]
+        r = {**recipe, "params": {**params, **cand}}
+
+        def on_fold(i, per_fold):
+            so_far = _mean([f[metric] for f in per_fold])
+            if so_far is None:
+                return
+            trial.report(so_far, i)
+            if trial.should_prune():
+                rows.append({**cand, "cv_mean": None, "cv_std": None,
+                             "stopped_early": True})
+                tried[key] = so_far
+                raise optuna.TrialPruned()
+
+        res = _cross_validate(r, data["Xtr"], data["ytr"], splits, classes,
+                              positive, ticker,
+                              f"{label}: setting {trial.number + 1} of "
+                              f"{total}", on_fold)
+        values = [v for v in res["scores"][metric] if v is not None]
+        score = _mean(values)
+        rows.append({**cand, "cv_mean": score,
+                     "cv_std": float(np.std(values or [0])),
+                     "stopped_early": False})
+        if score is not None and (not best or _better(family, metric, score,
+                                                      best[0][0])):
+            best[:] = [(score, r, res)]
+        tried[key] = float("nan") if score is None else score
+        return tried[key]
+
+    seconds = float(search.get("seconds") or 0) or None
+    study.optimize(objective, n_trials=total, timeout=seconds)
+    if not best:
+        raise ValueError("No setting could be scored.")
+    return best[0], rows
 
 
 def _failed(key, task, ref):
