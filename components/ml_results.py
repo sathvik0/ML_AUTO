@@ -1273,8 +1273,13 @@ def render():
                            f", best first. The best was then trained on "
                            f"every training row.")
                 st.dataframe(res["search"].rename(columns={
-                    "cv_mean": "CV mean", "cv_std": "CV spread"}),
+                    "cv_mean": "CV mean", "cv_std": "CV spread",
+                    "stopped_early": "Stopped early"}),
                     hide_index=True, width="stretch")
+                if "stopped_early" in res["search"]:
+                    st.caption("Bayesian search: a setting stopped early "
+                               "trailed the earlier ones after a fold, so "
+                               "its remaining folds were skipped.")
     st.divider()
     _downloads(run, res, df)
     project_panel.register(run, res)

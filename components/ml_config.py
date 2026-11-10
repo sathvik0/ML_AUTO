@@ -78,7 +78,8 @@ PCA = {0: "Off", 2: "2", 3: "3", 5: "5", 10: "10"}
 FOLDS = {0: "None", 3: "3 folds", 5: "5 folds", 10: "10 folds"}
 TUNING = {"fixed": "As set below",
           "grid": "Grid search: every combination",
-          "random": "Random search: a sample of combinations"}
+          "random": "Random search: a sample of combinations",
+          "bayes": "Bayesian search: learns where to look next"}
 NO_GROUP = "(none)"
 
 
@@ -574,17 +575,31 @@ def _models(task, n_rows):
     if blocked:
         st.caption(" ".join(blocked.values()))
     mode = "fixed"
-    n_iter = 10
+    n_iter, minutes = 10, 0
     if task != "clustering":
+        tuning = {k: v for k, v in TUNING.items()
+                  if k != "bayes" or not ml.package_problem("optuna")}
         mode_key = f"{PREFIX}tune_mode"
-        _seed(mode_key, "fixed", list(TUNING))
-        mode = st.radio("Settings", list(TUNING), key=mode_key,
-                        horizontal=True, format_func=TUNING.get)
-        if mode == "random":
+        _seed(mode_key, "fixed", list(tuning))
+        mode = st.radio("Settings", list(tuning), key=mode_key,
+                        horizontal=True, format_func=tuning.get)
+        if mode in ("random", "bayes"):
+            c1, c2 = st.columns(2)
             it_key = f"{PREFIX}n_iter"
-            _seed(it_key, 10)
-            n_iter = st.number_input("Combinations to try", min_value=2,
+            _seed(it_key, 10 if mode == "random" else 30)
+            n_iter = c1.number_input("Combinations to try", min_value=2,
                                      max_value=100, step=1, key=it_key)
+        if mode == "bayes":
+            min_key = f"{PREFIX}tune_minutes"
+            _seed(min_key, 0)
+            minutes = c2.number_input("Time limit per model (minutes, 0 for "
+                                      "none)", min_value=0, max_value=240,
+                                      step=5, key=min_key)
+            st.caption("Optuna's TPE sampler picks each next combination "
+                       "from the scores of those already tried, and stops "
+                       "one early when it trails the others after a fold. "
+                       "It finds good settings in fewer tries than random "
+                       "search on wide grids.")
         if mode != "fixed":
             st.caption("Each combination is scored by cross-validation on "
                        "the training rows; the best is then trained on all of "
@@ -603,7 +618,8 @@ def _models(task, n_rows):
                     params[spec["name"]] = value
                 else:
                     space[spec["name"]] = list(value) or [spec["default"]]
-        search = ({"mode": mode, "space": space, "n_iter": int(n_iter)}
+        search = ({"mode": mode, "space": space, "n_iter": int(n_iter),
+                   "seconds": int(minutes) * 60}
                   if mode != "fixed" and space else None)
         out.append({"key": k, "params": params, "search": search})
     return out

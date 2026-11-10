@@ -11,6 +11,7 @@ matplotlib>=3.7.0       # charts in that summary
 scikit-learn>=1.7       # 1.7: partial dependence takes custom values
 joblib>=1.6             # model upload: 1.6 reads a nested pickle through the guarded unpickler
 shap>=0.46              # SHAP explanations on the results page; hidden without it
+optuna>=4.0             # Bayesian search on the configure page; hidden without it
 # XGBoost: the CPU-only wheel is 5.6 MB against 132 MB for the CUDA one, and
 # it ships for Linux and Windows only, so macOS takes the ordinary package.
 xgboost-cpu>=2.1; platform_system != "Darwin"

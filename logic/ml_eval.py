@@ -984,8 +984,10 @@ def model_card(run, res) -> str:
                      " (test rows)")]
     lines += ["", "## Settings", "", f"- {settings_text(task, res)}"]
     if res.get("tuned"):
+        how = (" (Bayesian search, Optuna)"
+               if "stopped_early" in res["search"] else "")
         lines.append(f"- Tuned: {len(res['search'])} settings compared by "
-                     f"cross-validation")
+                     f"cross-validation{how}")
     if base.get("balance"):
         lines.append("- Classes balanced by weight")
     resampled = {"smote": "oversampled with SMOTE",
@@ -1153,6 +1155,8 @@ def fit(recipe, X, y, groups):
     if search["mode"] == "grid":
         found = GridSearchCV(pipe, grid, cv=cv, scoring=score)
     else:
+        # "bayes" (Optuna, in the app) samples at random here, so this
+        # script needs no extra package.
         found = RandomizedSearchCV(pipe, grid, n_iter=search["n_iter"],
                                    cv=cv, scoring=score,
                                    random_state=recipe["seed"])
