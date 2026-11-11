@@ -251,8 +251,9 @@ def check(version, info, train_run, current, limits):
     """The summary of one check (no side effects)."""
     reference = train_run["frame"]
     current = _prepared(info, current)
-    features = [f for f in info["features"] if f in reference.columns
-                and f in current.columns]
+    columns = info.get("columns") or {f: f for f in info["features"]}
+    features = [c for c in columns.values() if c in reference.columns
+                and c in current.columns]
     target = info["recipe"].get("target")
     cols = features + ([target] if target and target in reference.columns
                        and target in current.columns else [])
@@ -273,8 +274,8 @@ def check(version, info, train_run, current, limits):
                   for r in pairs.head(3).itertuples()]
         if not pairs.empty else [],
         "performance": _performance(info, version, current),
-        "missing_features": [f for f in info["features"]
-                             if f not in current.columns],
+        "missing_features": [c for c in columns.values()
+                             if c not in current.columns],
     }
     status, reasons = assess(summary, limits)
     summary["reasons"] = reasons
@@ -284,6 +285,10 @@ def check(version, info, train_run, current, limits):
 def _retrain(project_id, version, train_run, current, monitor_name):
     """Train the model again on the original data plus the newly labelled
     rows, with the settings it won with; register it in staging."""
+    if train_run.get("external"):
+        raise CheckError("A model trained elsewhere is not retrained here: "
+                         "retrain it where it was built and register the "
+                         "new file.")
     target = train_run.get("target")
     reference = train_run["frame"]
     if target and target in current.columns:

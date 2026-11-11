@@ -58,7 +58,11 @@ Beside the steps:
 - **Use own model** — upload a model (this app's file, scikit-learn,
   XGBoost or LightGBM) and either **evaluate** it against actual values, or
   **predict** every row of this file, an uploaded file or a Snowflake
-  table, then download the predictions or write them to Snowflake.
+  table, then download the predictions or write them to Snowflake. An
+  evaluated model can be **registered** in a project like one trained
+  here: the file is kept as uploaded, with the column mapping and column
+  types used in the evaluation, and goes through stages, approvals, the
+  model API, batch jobs and monitoring (monitoring does not retrain it).
 - **Drift analysis** — compare the file loaded here with newer data
   (upload, Snowflake, or the bundled recent-customers sample):
   - *Covariate drift*: PSI per column with Stable / Moderate / Major bands,
@@ -203,7 +207,9 @@ set, the monitor's own Slack or Teams webhook. A monitor can also
 **retrain on alert**: the model's winning settings on the training data
 plus the newly labelled rows, registered as a *staging* version for review
 — production still needs approval, and only one retrained version waits at
-a time. `python -m worker.batch --due` runs due monitors with the batch
+a time. Models trained elsewhere and registered from Use own model are not
+retrained; their monitors compare new data with the file they were
+evaluated on. `python -m worker.batch --due` runs due monitors with the batch
 jobs.
 
 ## Governance
