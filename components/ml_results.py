@@ -15,6 +15,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from components import (export_page, ml_evaluate, ml_summary, project_panel,
+                        shell,
                         snowflake_panel)
 from logic import ml, ml_eval
 from utils import auth, guard, log
@@ -132,15 +133,82 @@ def _verdict(run):
                    f"{target}.")
 
 
+SETTINGS_SHOWN = 70       # characters of a model's settings in the table
+
+
+def _cards(run, best):
+    """The run in four numbers, above everything else."""
+    cards = st.columns(4)
+    cards[0].metric("Best model", best["label"], border=True)
+    if run["task"] == "clustering":
+        names = best.get("names") or {}
+        cards[1].metric("Clusters", len([k for k in names if k != -1]) or
+                        "—", border=True)
+        sil = best["test"].get("silhouette")
+        cards[2].metric("Silhouette", "—" if sil is None else f"{sil:.3f}",
+                        border=True)
+        cards[3].metric("Rows", f"{run['n_rows']:,}", border=True)
+        return
+    metric, family = run["metric"], run["family"]
+    name = ml.metric_label(family, metric)
+    value = best["test"].get(metric)
+    rows_ = "rows scored" if run.get("external") else "test rows"
+    cards[1].metric(f"{name}, {rows_}",
+                    "—" if value is None else f"{value:.3f}", border=True)
+    base = next((r for r in run["results"] if r["key"] == ml.BASELINE
+                 and not r.get("error")), None)
+    ref = base["test"].get(metric) if base else None
+    if value is None or ref is None:
+        cards[2].metric("Baseline", "—", border=True)
+    else:
+        cards[2].metric(
+            "Baseline (no model)", f"{ref:.3f}",
+            delta=f"{value - ref:+.3f} with the model",
+            delta_color="normal" if ml.higher_is_better(family, metric)
+            else "inverse", border=True)
+    if run.get("external"):
+        cards[3].metric("Rows scored", f"{run['n_test']:,}", border=True)
+    else:
+        cards[3].metric("Rows: train / test",
+                        f"{run['n_train']:,} / {run['n_test']:,}",
+                        border=True)
+
+
+def _leaderboard_table(run):
+    """Every model in one dense table: the best and the baseline marked."""
+    table = ml_eval.leaderboard(run)
+    skip = ("Model", "key", "Status", "Settings")
+    numbers = [c for c in table.columns if c not in skip]
+    rows = []
+    for rec in table.to_dict("records"):
+        mark = rec.get("Status") or ""
+        row = {"Model": rec["Model"],
+               "Status": shell.status("Best", "good") if mark == "Best" else
+               shell.status("Baseline", "idle") if mark == "Reference" else
+               shell.status("Failed", "bad") if mark else None}
+        for c in numbers:
+            v = rec.get(c)
+            row[c] = (None if v is None or pd.isna(v) else
+                      f"{int(v)}" if c == "Clusters" else
+                      f"{v:.2f}" if c == "Fit (s)" else f"{v:.3f}")
+        text = rec.get("Settings")
+        text = "" if text is None or pd.isna(text) else str(text)
+        row["Settings"] = (text if len(text) <= SETTINGS_SHOWN else
+                           text[:SETTINGS_SHOWN - 1] + "…")
+        rows.append(row)
+    shell.table([("Model", "Model"), ("", "Status")]
+                + [(c, c, "num") for c in numbers]
+                + [("Settings", "Settings")], rows)
+    failed = [r for r in table.to_dict("records")
+              if str(r.get("Status") or "").startswith("Could not")]
+    for r in failed:
+        st.caption(f"{r['Model']}: {r['Status']}")
+
+
 def _leaderboard(run):
-    table = ml_eval.leaderboard(run).drop(columns="key")
-    metric_cols = [c for c in table.columns
-                   if c not in ("Model", "Status", "Settings", "Clusters")]
-    config = {c: st.column_config.NumberColumn(format="%.3f")
-              for c in metric_cols}
-    config["Fit (s)"] = st.column_config.NumberColumn(format="%.2f")
-    st.dataframe(table, hide_index=True, width="stretch",
-                 column_config=config)
+    left, right = st.columns([1.8, 1], gap="medium")
+    with left:
+        _leaderboard_table(run)
     metric = run["metric"]
     ok = [r for r in run["results"] if not r.get("error")
           and r["test"].get(metric) is not None]
@@ -161,10 +229,11 @@ def _leaderboard(run):
             bargap=0.35)
     by = ("chosen by cross-validation, judged on the test rows"
           if run["folds"] else "chosen on the test rows")
-    st.caption("The uploaded model in colour, the baseline grey, both on the "
-               "rows with a target." if run.get("external") else
-               f"Best model in colour, {by}; the baseline is grey.")
-    _chart(fig, "ml_models")
+    with right:
+        _chart(fig, "ml_models")
+        st.caption("The uploaded model in colour, the baseline grey, both "
+                   "on the rows with a target." if run.get("external") else
+                   f"Best model in colour, {by}; the baseline is grey.")
 
 
 # ── classification ──────────────────────────────────────────────────────
@@ -898,7 +967,7 @@ def _waterfall(run, res, exp, df):
         x=[base] + list(steps["value"]) + [total],
         measure=["absolute"] + ["relative"] * len(steps) + ["total"],
         increasing=dict(marker_color=PALETTE[7]),
-        decreasing=dict(marker_color=PALETTE[6]),
+        decreasing=dict(marker_color=PALETTE[0]),
         totals=dict(marker_color=MUTED),
         hovertemplate="%{y}: %{x:+.4f}<extra></extra>"))
     fig.update_yaxes(autorange="reversed", type="category")
@@ -1196,7 +1265,7 @@ def _score_new(run, res):
 
 # ── the page ────────────────────────────────────────────────────────────
 def _header(run):
-    st.markdown("## Model results")
+    st.markdown("## Results")
     st.caption(_summary(run))
 
 
@@ -1215,10 +1284,11 @@ def render():
                    "again may help.")
         _leaderboard(run)
         return
+    _cards(run, best)
     _verdict(run)
-    st.markdown("#### Leaderboard")
-    _leaderboard(run)
-    st.divider()
+    with st.container(border=True, key="card_leaderboard"):
+        st.markdown("#### Leaderboard")
+        _leaderboard(run)
     keys = [r["key"] for r in models]
     pick_key = "ml_r_model"
     if pick_key not in ss or ss[pick_key] not in keys:
@@ -1280,8 +1350,8 @@ def render():
                     st.caption("Bayesian search: a setting stopped early "
                                "trailed the earlier ones after a fold, so "
                                "its remaining folds were skipped.")
-    st.divider()
-    _downloads(run, res, df)
+    with st.container(border=True, key="card_downloads"):
+        _downloads(run, res, df)
     project_panel.register(run, res)
     with st.expander("Score a new file with this model"):
         _score_new(run, res)
