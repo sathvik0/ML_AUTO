@@ -35,6 +35,10 @@ from utils import log
 _log = log.get("ml_upload")
 
 KEY = "uploaded"
+# A model trained elsewhere, registered here: the original file, unchanged,
+# with what this app learnt when it was evaluated (which file column feeds
+# each input, as what type, the classes and the class of interest).
+EXTERNAL = "ml-auto/uploaded-model/1"
 EXTENSIONS = (".joblib", ".pkl", ".pickle", ".json", ".ubj", ".txt")
 MAX_BYTES = 500 * 1024 * 1024
 
@@ -445,6 +449,8 @@ def read(data, filename):
             info = _lightgbm(data)
         else:
             obj = _guarded_load(data)
+            if isinstance(obj, dict) and obj.get("format") == EXTERNAL:
+                return _from_external(obj)
             if isinstance(obj, dict) and {"pipeline", "recipe"} <= set(obj):
                 info = _from_bundle(obj)
             elif hasattr(obj, "predict"):
@@ -479,7 +485,52 @@ def read(data, filename):
     log.event(_log, "ml_model_uploaded", kind=info["kind"], task=info["task"],
               features=info["n_features"],
               ms=round((time.perf_counter() - t0) * 1000))
+    # Kept so the model can be registered as the very file uploaded.
+    info["source_file"] = {"name": str(filename or "model"), "data": data}
     return info, None
+
+
+def external_bundle(run, res):
+    """The registered file for a model evaluated here but trained elsewhere
+    (see EXTERNAL), or None when the run no longer has the original."""
+    src = (run.get("upload") or {}).get("file")
+    if not src:
+        return None
+    base = run["base"]
+    return {"format": EXTERNAL, "model_file": src["data"],
+            "model_filename": src["name"], "label": run["upload"]["label"],
+            "task": run["task"], "target": run.get("target"),
+            "columns": dict(base["columns"]), "kinds": dict(base["kinds"]),
+            "by_position": bool(base.get("by_position")),
+            "classes": list(run.get("classes") or []),
+            "positive": run.get("positive"),
+            "prep_steps": list(run.get("prep_steps") or []),
+            "threshold": res.get("threshold"), "created": run["created"],
+            "sklearn": run.get("sklearn")}
+
+
+def _from_external(obj):
+    """A registered outside model: its own file read through the same
+    guarded loader, then described by what was stored beside it."""
+    inner, why = read(obj["model_file"], obj["model_filename"])
+    if why:
+        return None, why
+    columns = dict(obj["columns"])
+    task = obj["task"]
+    return {**inner, "kind": "external", "inner_kind": inner["kind"],
+            "label": obj["label"], "task": task,
+            "features": list(columns), "n_features": len(columns),
+            "columns": columns, "kinds": dict(obj["kinds"]),
+            "by_position": bool(obj.get("by_position")),
+            "classes": list(obj.get("classes") or []) or None,
+            "positive": obj.get("positive"),
+            "prep_steps": list(obj.get("prep_steps") or []),
+            "threshold": obj.get("threshold"),
+            "recipe": {"task": task, "target": obj.get("target"),
+                       "target_rule": None},
+            "trained": obj.get("created"), "sklearn": obj.get("sklearn"),
+            "source_file": {"name": obj["model_filename"],
+                            "data": obj["model_file"]}}, None
 
 
 # ── which file column feeds which model input ───────────────────────────
@@ -505,6 +556,10 @@ def feature_kinds(info, columns, prof):
     if info["kind"] == "app":
         cats = set(info["recipe"]["categorical"])
         return {n: "categorical" if n in cats else "numeric" for n in columns}
+    if info.get("kinds"):
+        # Fixed when it was registered: a few rows sent to the API cannot
+        # say whether a column of codes is numbers or categories.
+        return {n: info["kinds"].get(n, "numeric") for n in columns}
     if info["kind"] in ("xgboost", "lightgbm"):
         return {n: "numeric" for n in columns}
     types = prof.set_index("column")["type"]
@@ -672,6 +727,7 @@ def evaluate(df, info, columns, task, target=None, positive=None, prof=None,
     log.event(_log, "ml_model_evaluated", kind=info["kind"], task=task,
               rows=n, labelled=int(labelled.sum()),
               ms=round(seconds * 1000))
+    run["upload"]["file"] = info.get("source_file")
     return run, None
 
 
@@ -699,7 +755,7 @@ def predict_only(df, info, columns, task, prof=None, by_position=False):
             name = _free("ML_Cluster", taken)
             out[name] = np.asarray(model.predict(X))
         elif task == "classification":
-            if info["kind"] == "app" and info.get("classes"):
+            if info["kind"] in ("app", "external") and info.get("classes"):
                 classes = list(info["classes"])
             else:
                 classes = [str(c) for c in ml_recipe.label_text(

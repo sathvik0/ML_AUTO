@@ -18,7 +18,7 @@ import logging
 import pandas as pd
 import streamlit as st
 
-from logic import ml_eval, projects
+from logic import ml_eval, ml_upload, projects
 from logic.projects import AccessDenied
 from utils import auth, db, guard, log, scroll
 
@@ -284,7 +284,7 @@ def save_threshold(run, res):
 def register(run, res):
     """Register the model on screen as a new version in the project."""
     p = current()
-    if not available() or run.get("external"):
+    if not available():
         return
     with st.container(border=True, key="card_registry"):
         st.markdown("#### Model registry")
@@ -295,6 +295,22 @@ def register(run, res):
         if not can_edit():
             st.caption("Registering models needs an editor of the project.")
             return
+        if run.get("external") and res["key"] != ml_upload.KEY:
+            st.caption("Pick the uploaded model above to register it; the "
+                       "baseline is only a yardstick.")
+            return
+        if run.get("external") and not run["upload"].get("file"):
+            st.caption("This evaluation was made before uploaded models "
+                       "could be registered: upload the file again on Use "
+                       "own model to register it.")
+            return
+        if run.get("external"):
+            st.caption("Registered as the file you uploaded, unchanged, "
+                       "with the column mapping used here. It then goes "
+                       "through stages, approvals, the model API, batch "
+                       "jobs and monitoring like a model trained here; "
+                       "monitoring compares new data with the file it was "
+                       "evaluated on, and does not retrain it.")
         autosave()                       # the run must be stored first
         rid = run.get("_project_run_id")
         c1, c2 = st.columns([3, 1.2], vertical_alignment="bottom")

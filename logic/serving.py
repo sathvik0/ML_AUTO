@@ -32,7 +32,7 @@ def load(version_id, fetch):
     info, why = ml_upload.read(fetch(), "model.joblib")
     if why:
         raise ScoringError(why)
-    if info["kind"] != "app":
+    if info["kind"] not in ("app", "external"):
         raise ScoringError("Not a model file from this app.")
     _CACHE[version_id] = info
     while len(_CACHE) > CACHE_SIZE:
@@ -53,14 +53,17 @@ def score(info, rows: pd.DataFrame) -> pd.DataFrame:
         except ml_prep.StepError as e:
             raise ScoringError(f"The model's preparation does not fit these "
                                f"rows. {e}") from None
-    missing = [f for f in info["features"] if f not in rows.columns]
+    # Each model input from its file column (the same name for this app's
+    # own models; as mapped at registration for one trained elsewhere).
+    columns = info.get("columns") or {f: f for f in info["features"]}
+    missing = [c for c in columns.values() if c not in rows.columns]
     if missing:
         raise ScoringError("Missing columns: " + ", ".join(missing[:20])
                            + (f" and {len(missing) - 20} more"
                               if len(missing) > 20 else ""))
-    out, why = ml_upload.predict_only(rows, info,
-                                      {f: f for f in info["features"]},
-                                      info["task"])
+    out, why = ml_upload.predict_only(
+        rows, info, columns, info["task"],
+        by_position=bool(info.get("by_position")))
     if why:
         raise ScoringError(why)
     names = info.get("cluster_names")

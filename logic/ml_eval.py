@@ -1504,6 +1504,16 @@ def config_script(df, config, steps=None) -> str:
 
 
 def model_bytes(run, res) -> bytes:
+    if run.get("external"):
+        if res["key"] != ml_upload.KEY:
+            raise ValueError("Only the uploaded model can be registered.")
+        bundle = ml_upload.external_bundle(run, res)
+        if bundle is None:
+            raise ValueError("This evaluation no longer holds the uploaded "
+                             "file; upload it again to register it.")
+        buf = io.BytesIO()
+        joblib.dump(bundle, buf)
+        return buf.getvalue()
     bundle = {"pipeline": res["pipeline"], "recipe": res["recipe"],
               "classes": run["classes"], "positive": run["positive"],
               "cluster_names": res.get("names"), "sklearn": run["sklearn"],

@@ -300,3 +300,38 @@ def test_configure_page_time_split():
     assert "latest as test" in plan and "walk-forward folds" in plan
     assert "<b>Renewal_Date</b>" in plan
     assert not next(b for b in at.button if b.key == "ml_train").disabled
+
+
+def test_register_an_uploaded_model_from_results():
+    import io
+    import joblib
+    from sklearn.linear_model import LogisticRegression
+    from logic import ml_upload
+    df = pd.read_csv("sample_data/insurance_churn.csv").head(600)
+    cols = ["Tenure_Years", "Service_Calls_12M"]
+    model = LogisticRegression().fit(df[cols], df["Churned"])
+    buf = io.BytesIO()
+    joblib.dump(model, buf)
+    info, _ = ml_upload.read(buf.getvalue(), "outside.joblib")
+    run, why = ml_upload.evaluate(df, info, {c: c for c in cols},
+                                  "classification", "Churned", "Yes",
+                                  prof=ml.profile(df))
+    assert why is None
+    dev = {"sub": "dev", "email": "dev@localhost", "role": "admin"}
+    pid = projects.create_project(dev, "Outside model")["id"]
+    at = AppTest.from_function(_results_page, default_timeout=120)
+    at.session_state["ml_run"] = run
+    at.session_state["ml_df"] = df
+    at.session_state["proj"] = {"id": pid, "name": "Outside model",
+                                "role": "owner"}
+    at.run()
+    assert not at.exception
+    assert any("Registered as the file you uploaded" in c.value
+               for c in at.caption)
+    reg = next(b for b in at.button if (b.key or "").startswith("proj_reg_"))
+    assert not reg.disabled
+    reg.click().run()
+    assert not at.exception
+    got = projects.list_models(dev, pid)
+    assert [(m["name"], m["model_key"]) for m in got] == [
+        ("churned_model", "uploaded")]
