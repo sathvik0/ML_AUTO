@@ -46,7 +46,7 @@ def _trained():
 def test_summary_counts_only_what_the_user_can_see():
     assert overview.summary(ANA) == {"projects": [], "production": 0,
                                      "approvals": [], "monitors": [],
-                                     "runs": []}
+                                     "models": [], "runs": []}
     run = _trained()
     pid = projects.create_project(ANA, "Churn")["id"]
     rid = projects.save_run(ANA, pid, run)
@@ -61,6 +61,11 @@ def test_summary_counts_only_what_the_user_can_see():
     assert [(a["model"], a["to_stage"], a["project"])
             for a in got["approvals"]] == [("churn", "production", "Churn")]
     assert [r["best_model"] for r in got["runs"]] == ["logistic"]
+    assert got["models"] == []              # registered, not yet staged
+    deployment.set_stage(ANA, pid, v["id"], "staging")
+    assert [(m["name"], m["stage"], m["monitor"])
+            for m in overview.summary(ANA)["models"]] == [
+        ("churn", "staging", None)]
     # Someone the project is not shared with sees none of it.
     assert overview.summary(BEN)["approvals"] == []
     assert overview.summary(BEN)["runs"] == []
@@ -116,3 +121,20 @@ def test_project_sections_from_the_sidebar():
         assert not at.exception, label
         assert at.session_state["page"] == "ml_project"
         assert any(m.value == f"## {label}" for m in at.markdown), label
+
+
+def test_table_escapes_text_and_keeps_chips():
+    from components import shell
+    assert "chip-good" in shell.status("production")
+    assert "chip-bad" in shell.status("alert")
+    assert "&lt;b&gt;" in shell.status("<b>")
+    at = AppTest.from_function(_table_page).run()
+    html = at.markdown[0].value
+    assert "&lt;script&gt;" in html and "<script>" not in html
+    assert "chip chip-info" in html
+
+
+def _table_page():
+    from components import shell
+    shell.table([("Name", "n"), ("Stage", "s")],
+                [{"n": "<script>x</script>", "s": shell.status("staging")}])

@@ -17,7 +17,7 @@ DRIFT = ("ml_drift", "Drift analysis")
 _CSS = """
 <style>
 .st-key-ml_nav {
-  border-bottom: 1px solid #E3E5EA; margin-bottom: 0.9rem;
+  border-bottom: 1px solid #DCE1EA; margin-bottom: 0.9rem;
 }
 .st-key-ml_nav [data-testid="stHorizontalBlock"] { gap: 0.2rem; }
 .st-key-ml_nav button {
@@ -31,7 +31,7 @@ _CSS = """
 .st-key-ml_nav button:hover:not(:disabled) { color: #1F2430 !important; }
 .st-key-ml_nav button:disabled { color: #B4B8C2 !important; }
 .st-key-ml_nav [data-testid="stBaseButton-primary"] {
-  color: #3C3489 !important; border-bottom-color: #534AB7 !important;
+  color: #1B4FA8 !important; border-bottom-color: #1D5FD1 !important;
 }
 .st-key-ml_nav .nav-or {
   border-left: 1px solid #E3E5EA; height: 1.4rem; margin: 0.55rem auto 0;

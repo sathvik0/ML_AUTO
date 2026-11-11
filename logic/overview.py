@@ -6,16 +6,18 @@ from logic import projects
 from utils import db
 
 ATTENTION = ("alert", "warning")
+_RANK = {"not run": 0, "ok": 1, "warning": 2, "alert": 3}
 
 
-def summary(user, runs=8):
+def summary(user, runs=8, models=12):
     """Across every project the user can see: the projects, how many model
     versions are in production, approvals waiting, monitors that need a
-    look, and the latest runs."""
+    look, the model versions in staging or production with their monitor's
+    last word, and the latest runs."""
     mine = projects.list_projects(user)
     names = {p["id"]: p["name"] for p in mine}
     out = {"projects": mine, "production": 0, "approvals": [],
-           "monitors": [], "runs": []}
+           "monitors": [], "models": [], "runs": []}
     if not names:
         return out
     ids = list(names)
@@ -36,14 +38,32 @@ def summary(user, runs=8):
              "model": v.name, "version": v.version, "to_stage": t.to_stage,
              "requested_by": t.requested_by, "requested_at": t.requested_at}
             for t, v in waiting]
-        flagged = s.scalars(select(db.Monitor).where(
-            db.Monitor.project_id.in_(ids), db.Monitor.enabled.is_(True),
-            db.Monitor.last_status.in_(ATTENTION)).order_by(
-            db.Monitor.last_run_at.desc()))
+        watching = s.scalars(select(db.Monitor).where(
+            db.Monitor.project_id.in_(ids), db.Monitor.enabled.is_(True))
+            .order_by(db.Monitor.last_run_at.desc())).all()
         out["monitors"] = [
             {"project_id": m.project_id, "project": names[m.project_id],
              "name": m.name, "model": m.model_name, "status": m.last_status,
-             "last_run_at": m.last_run_at} for m in flagged]
+             "last_run_at": m.last_run_at} for m in watching
+            if m.last_status in ATTENTION]
+        # A model's monitors, summed up by the worst of their last results.
+        worst = {}
+        for m in watching:
+            key = (m.project_id, m.model_name)
+            status = m.last_status or "not run"
+            if _RANK.get(status, 0) >= _RANK.get(worst.get(key), -1):
+                worst[key] = status
+        live = s.scalars(select(db.ModelVersion).where(
+            db.ModelVersion.project_id.in_(ids),
+            db.ModelVersion.stage.in_(("production", "staging"))).order_by(
+            db.ModelVersion.stage, db.ModelVersion.created_at.desc())
+            .limit(models))
+        out["models"] = [
+            {"project_id": v.project_id, "project": names[v.project_id],
+             "name": v.name, "version": v.version, "stage": v.stage,
+             "metric": v.metric, "score": v.score,
+             "monitor": worst.get((v.project_id, v.name)),
+             "created_at": v.created_at} for v in live]
         latest = s.scalars(select(db.Run).where(
             db.Run.project_id.in_(ids)).order_by(
             db.Run.created_at.desc()).limit(runs))

@@ -23,6 +23,45 @@ ANALYSIS = ("ml_eda", "ml_features", "ml_config", "ml_results", "ml_upload",
             "ml_drift")
 
 
+# What a status says, as a chip's colour.
+TONES = {"production": "good", "ok": "good", "succeeded": "good",
+         "approved": "good", "staging": "info", "running": "info",
+         "queued": "info", "pending": "warn", "warning": "warn",
+         "alert": "bad", "failed": "bad", "rejected": "bad"}
+
+
+class Html(str):
+    """Markup this module made, which `table` does not escape again."""
+
+
+def status(text, tone=None):
+    """A small coloured label for a status."""
+    tone = tone or TONES.get(str(text).lower(), "idle")
+    return Html(f"<span class='chip chip-{tone}'>"
+                f"{html.escape(str(text).capitalize())}</span>")
+
+
+def table(columns, rows):
+    """A dense table: `columns` are (label, key) or (label, key, "num");
+    a cell is text (escaped here) or a `status(...)`."""
+    head = "".join(
+        f"<th class='{c[2] if len(c) > 2 else ''}'>{html.escape(c[0])}</th>"
+        for c in columns)
+    body = ""
+    for row in rows:
+        cells = ""
+        for c in columns:
+            value = row.get(c[1])
+            text = (value if isinstance(value, Html) else
+                    "<span class='muted'>—</span>" if value in (None, "")
+                    else html.escape(str(value)))
+            cells += f"<td class='{c[2] if len(c) > 2 else ''}'>{text}</td>"
+        body += f"<tr>{cells}</tr>"
+    st.markdown(f"<div class='ent-scroll'><table class='ent-table'><thead>"
+                f"<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>",
+                unsafe_allow_html=True)
+
+
 def section():
     """The project page's open section."""
     keys = [k for k, _, _ in SECTIONS]

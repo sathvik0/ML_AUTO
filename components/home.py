@@ -40,19 +40,40 @@ def _attention(data, start_ml):
         st.caption(f"And {len(items) - 8} more.")
 
 
+def _score(metric, score):
+    return None if score is None else f"{metric or ''} {score:.3f}".strip()
+
+
+def _models(data):
+    st.markdown("#### Models in staging and production")
+    if not data["models"]:
+        st.caption("None yet. Register a model from Results, then move it "
+                   "to staging or request production.")
+        return
+    shell.table(
+        [("Model", "model"), ("Version", "version"), ("Project", "project"),
+         ("Stage", "stage"), ("Score", "score", "num"),
+         ("Monitor", "monitor")],
+        [{"model": m["name"], "version": f"v{m['version']}",
+          "project": m["project"], "stage": shell.status(m["stage"]),
+          "score": _score(m["metric"], m["score"]),
+          "monitor": shell.status(m["monitor"]) if m["monitor"] else None}
+         for m in data["models"]])
+
+
 def _runs(data):
     st.markdown("#### Recent runs")
     if not data["runs"]:
         st.caption("No runs yet. Train a model and it shows here.")
         return
-    st.dataframe(pd.DataFrame([{
-        "When": _when(r["created_at"]), "Project": r["project"],
-        "Task": r["task"], "Target": r["target"] or "—",
-        "Best model": r["best_model"] or "—", "Metric": r["metric"] or "—",
-        "Score": r["score"], "By": r["created_by"]} for r in data["runs"]]),
-        hide_index=True, width="stretch",
-        column_config={"Score": st.column_config.NumberColumn(
-            format="%.3f")})
+    shell.table(
+        [("When", "when"), ("Project", "project"), ("Task", "task"),
+         ("Target", "target"), ("Best model", "best"),
+         ("Score", "score", "num"), ("By", "by")],
+        [{"when": _when(r["created_at"]), "project": r["project"],
+          "task": r["task"], "target": r["target"], "best": r["best_model"],
+          "score": _score(r["metric"], r["score"]), "by": r["created_by"]}
+         for r in data["runs"]])
 
 
 def render(start_ml, load_sample):
@@ -78,11 +99,12 @@ def render(start_ml, load_sample):
     cards[1].metric("Models in production", data["production"], border=True)
     cards[2].metric("Approvals waiting", len(data["approvals"]), border=True)
     cards[3].metric("Monitors to check", len(data["monitors"]), border=True)
-    left, right = st.columns([1.15, 1], gap="medium")
+    with st.container(border=True, key="card_models"):
+        guard.section("Models", _models, data)
+    left, right = st.columns([1, 1], gap="medium")
     with left:
-        guard.section("Projects", project_panel.landing, start_ml)
-    with right:
         with st.container(border=True, key="card_attention"):
             guard.section("Needs attention", _attention, data, start_ml)
-        with st.container(border=True, key="card_runs"):
-            guard.section("Recent runs", _runs, data)
+        guard.section("Projects", project_panel.landing, start_ml)
+    with right, st.container(border=True, key="card_runs"):
+        guard.section("Recent runs", _runs, data)
