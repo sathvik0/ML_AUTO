@@ -289,7 +289,7 @@ def register(run, res):
     with st.container(border=True, key="card_registry"):
         st.markdown("#### Model registry")
         if not p:
-            st.caption("Save this work as a project (📁 at the top) to "
+            st.caption("Save this work as a project (the menu at the top) to "
                        "register models.")
             return
         if not can_edit():
@@ -326,16 +326,17 @@ def _runs(p, user):
         st.caption("No runs yet: train on Configure & train and each run "
                    "is saved here.")
         return
-    table = pd.DataFrame([{
-        "When": _fmt_time(r["created_at"]), "By": r["created_by"],
-        "Task": r["task"] + (" (own model)" if r["external"] else ""),
-        "Target": r["target"] or "—",
-        "Best": r["best_model"] or "—",
-        "Metric": r["metric"] or "—",
-        "Score": r["score"]} for r in rows])
-    st.dataframe(table, hide_index=True, width="stretch",
-                 column_config={"Score": st.column_config.NumberColumn(
-                     format="%.3f")})
+    from components import shell
+    shell.table(
+        [("When", "when"), ("Task", "task"), ("Target", "target"),
+         ("Best model", "best"), ("Metric", "metric"),
+         ("Score", "score", "num"), ("By", "by")],
+        [{"when": _fmt_time(r["created_at"]), "by": r["created_by"],
+          "task": r["task"] + (" (own model)" if r["external"] else ""),
+          "target": r["target"], "best": r["best_model"],
+          "metric": r["metric"],
+          "score": None if r["score"] is None else f"{r['score']:.3f}"}
+         for r in rows])
     labels = {r["id"]: f"{_fmt_time(r['created_at'])} · {r['task']} · "
                        f"{r['target'] or ''} · {r['best_model'] or ''}"
               for r in rows}
@@ -357,15 +358,21 @@ def _models(p, user):
     if not rows:
         st.caption("None yet: register a model from the results page.")
         return
-    st.dataframe(pd.DataFrame([{
-        "Model": m["name"], "Version": m["version"],
-        "Algorithm": m["model_key"], "Task": m["task"],
-        "Target": m["target"] or "—", "Metric": m["metric"] or "—",
-        "Score": m["score"], "Stage": m["stage"], "By": m["created_by"],
-        "When": _fmt_time(m["created_at"])} for m in rows]),
-        hide_index=True, width="stretch",
-        column_config={"Score": st.column_config.NumberColumn(
-            format="%.3f")})
+    from components import shell
+    shell.table(
+        [("Model", "model"), ("Version", "version"), ("Stage", "stage"),
+         ("Algorithm", "algorithm"), ("Target", "target"),
+         ("Metric", "metric"), ("Score", "score", "num"), ("By", "by"),
+         ("Registered", "when")],
+        [{"model": m["name"], "version": f"v{m['version']}",
+          "stage": shell.status("Not staged" if m["stage"] == "none"
+                                else m["stage"],
+                                shell.TONES.get(m["stage"], "idle")),
+          "algorithm": m["model_key"], "target": m["target"],
+          "metric": m["metric"],
+          "score": None if m["score"] is None else f"{m['score']:.3f}",
+          "by": m["created_by"], "when": _fmt_time(m["created_at"])}
+         for m in rows])
     labels = {m["id"]: f"{m['name']} v{m['version']} ({m['model_key']})"
               for m in rows}
     c1, c2 = st.columns([4, 1.2], vertical_alignment="bottom")
@@ -387,8 +394,9 @@ def _members(p, user):
     owner = p["role"] == "owner"
     for m in rows:
         c1, c2, c3 = st.columns([4, 1.5, 1], vertical_alignment="center")
+        from components import shell
         c1.markdown(m["email"])
-        c2.caption(m["role"])
+        c2.markdown(shell.status(m["role"]), unsafe_allow_html=True)
         if owner and c3.button("Remove", key=f"proj_rm_{m['email']}",
                                width="stretch"):
             guard.action("Removing", "The member could not be removed.",

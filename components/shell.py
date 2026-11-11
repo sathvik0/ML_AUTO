@@ -25,9 +25,10 @@ ANALYSIS = ("ml_eda", "ml_features", "ml_config", "ml_results", "ml_upload",
 
 # What a status says, as a chip's colour.
 TONES = {"production": "good", "ok": "good", "succeeded": "good",
-         "approved": "good", "staging": "info", "running": "info",
-         "queued": "info", "pending": "warn", "warning": "warn",
-         "alert": "bad", "failed": "bad", "rejected": "bad"}
+         "approved": "good", "pass": "good", "owner": "good",
+         "staging": "info", "running": "info", "queued": "info",
+         "editor": "info", "pending": "warn", "warning": "warn",
+         "alert": "bad", "failed": "bad", "rejected": "bad", "flag": "bad"}
 
 
 class Html(str):

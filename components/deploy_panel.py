@@ -6,7 +6,7 @@ import os
 import pandas as pd
 import streamlit as st
 
-from components import governance_panel
+from components import governance_panel, shell
 from logic import deployment, projects
 from logic.projects import AccessDenied
 from utils import auth, guard, log
@@ -50,6 +50,9 @@ def stages(p, user):
     pick = st.selectbox("Version", list(labels), format_func=labels.get,
                         key="dep_stage_pick")
     m = next(x for x in models if x["id"] == pick)
+    st.markdown("Now: " + shell.status(
+        "Not staged" if m["stage"] == "none" else m["stage"],
+        shell.TONES.get(m["stage"], "idle")), unsafe_allow_html=True)
     if editor:
         c = st.columns(4)
         for col, stage, label in ((c[0], "staging", "Move to staging"),
@@ -95,14 +98,15 @@ def stages(p, user):
     history = deployment.transitions(user, p["id"])
     if history:
         with st.expander("Stage history"):
-            st.dataframe(pd.DataFrame([{
-                "Model": f"{t['model']} v{t['version']}",
-                "To": t["to_stage"], "Status": t["status"],
-                "Asked by": t["requested_by"],
-                "Decided by": t["decided_by"] or "—",
-                "When": _t(t["decided_at"] or t["requested_at"]),
-                "Note": t["note"] or t["comment"]} for t in history]),
-                hide_index=True, width="stretch")
+            shell.table(
+                [("Model", "model"), ("To", "to"), ("Status", "status"),
+                 ("Asked by", "asked"), ("Decided by", "decided"),
+                 ("When", "when"), ("Note", "note")],
+                [{"model": f"{t['model']} v{t['version']}",
+                  "to": t["to_stage"], "status": shell.status(t["status"]),
+                  "asked": t["requested_by"], "decided": t["decided_by"],
+                  "when": _t(t["decided_at"] or t["requested_at"]),
+                  "note": t["note"] or t["comment"]} for t in history])
 
 
 # ── API keys ────────────────────────────────────────────────────────────
@@ -253,11 +257,12 @@ def _job(p, user, j, editor):
             else "paused" if j["schedule"] else "on demand")
     with st.container(border=True):
         c1, c2 = st.columns([4, 2], vertical_alignment="center")
-        c1.markdown(f"**{j['name']}** — {j['model_name']} "
-                    f"({j['stage']}) · {j['source']['type']} → "
-                    f"{j['destination']['type']}")
-        c2.caption(f"{j['schedule'] or 'manual'} · {when} · last: "
-                   f"{j['last_status'] or 'never run'}")
+        last = j["last_status"] or "never run"
+        c1.markdown(f"**{j['name']}** {shell.status(last)} — "
+                    f"{j['model_name']} ({j['stage']}) · "
+                    f"{j['source']['type']} → {j['destination']['type']}",
+                    unsafe_allow_html=True)
+        c2.caption(f"{j['schedule'] or 'manual'} · {when}")
         if editor:
             b = st.columns(3)
             if b[0].button("Run now", key=f"dep_run_{j['id']}",
@@ -300,7 +305,7 @@ def batch(p, user):
     if not jobs:
         st.caption("No jobs yet. A job scores rows with a model's "
                    "production (or staging) version, on demand or on a "
-                   "schedule (checked every 15 minutes on AWS).")
+                   "schedule (checked hourly on AWS by default).")
     for j in jobs:
         guard.section("Batch job", _job, p, user, j, editor)
     if editor:
