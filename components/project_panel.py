@@ -286,7 +286,7 @@ def register(run, res):
     p = current()
     if not available() or run.get("external"):
         return
-    with st.container(border=True):
+    with st.container(border=True, key="card_registry"):
         st.markdown("#### Model registry")
         if not p:
             st.caption("Save this work as a project (📁 at the top) to "

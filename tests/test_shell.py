@@ -142,3 +142,22 @@ def _table_page():
     from components import shell
     shell.table([("Name", "n"), ("Stage", "s")],
                 [{"n": "<script>x</script>", "s": shell.status("staging")}])
+
+
+def _results_page():
+    from components import ml_results
+    ml_results.render()
+
+
+def test_results_page_cards_and_leaderboard():
+    run = _trained()
+    at = AppTest.from_function(_results_page, default_timeout=120)
+    at.session_state["ml_run"] = run
+    at.session_state["ml_df"] = run["frame"]
+    at.run()
+    assert not at.exception
+    labels = [m.label for m in at.metric]
+    assert labels[0] == "Best model" and "Baseline (no model)" in labels
+    assert at.metric[0].value == "Logistic regression"
+    board = next(m.value for m in at.markdown if "ent-table" in m.value)
+    assert "chip-good'>Best" in board and "chip-idle'>Baseline" in board
