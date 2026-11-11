@@ -1,5 +1,7 @@
 """The app shell: the home page's numbers, and the real pages rendering
 inside the sidebar and top bar without an error."""
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -9,6 +11,8 @@ from utils import db
 
 ANA = {"sub": "a", "email": "ana@example.com", "role": "analyst"}
 BEN = {"sub": "b", "email": "ben@example.com", "role": "analyst"}
+# Absolute: Streamlit versions differ on what a relative path is relative to.
+APP = str(Path(__file__).resolve().parents[1] / "app.py")
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +80,7 @@ def _labels(at):
 
 
 def test_pages_render_inside_the_shell():
-    at = AppTest.from_file("app.py", default_timeout=120).run()
+    at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     assert _labels(at)[:3] == ["Home", "Data", "Analysis"]
     assert "Audit log" in _labels(at)             # dev sign-in is an admin
@@ -109,7 +113,7 @@ def test_pages_render_inside_the_shell():
 
 
 def test_project_sections_from_the_sidebar():
-    at = AppTest.from_file("app.py", default_timeout=120).run()
+    at = AppTest.from_file(APP, default_timeout=120).run()
     at.text_input(key="proj_landing_name").set_value("Shell test").run()
     next(b for b in at.button if b.key == "proj_landing_create").click().run()
     assert not at.exception
