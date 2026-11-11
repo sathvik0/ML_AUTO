@@ -141,6 +141,10 @@ class Run(Base):
     external: Mapped[bool] = mapped_column(Boolean, default=False)
     object_key: Mapped[str] = mapped_column(String(500))
     sklearn: Mapped[str] = mapped_column(String(32), default="")
+    # A label and the reason for the run, written by the people using it.
+    name: Mapped[str] = mapped_column(String(200), default="",
+                                      server_default="")
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_by: Mapped[str] = mapped_column(String(320), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
                                                  default=now)

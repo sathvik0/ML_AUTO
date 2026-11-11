@@ -896,7 +896,11 @@ def render():
               "seed": (extra or {}).get("seed", 42),
               "metric": (extra or {}).get("metric"), "balance": balance,
               "resample": (extra or {}).get("resample", "none"),
-              "models": models, "k_scan": k_scan, **combine}
+              "models": models, "k_scan": k_scan, **combine,
+              # The page as it stands, so a run can be opened here again
+              # with the same choices ("Clone settings" on the Runs page).
+              "widgets": {k: v for k, v in ss.items()
+                          if isinstance(k, str) and k.startswith(PREFIX)}}
     errors = ml.validate(df, config)
     with side, st.container(border=True, key="card_plan"):
         background, go = _summary_card(df, config, errors)

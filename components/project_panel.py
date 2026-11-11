@@ -335,6 +335,12 @@ def _fmt_time(t):
     return f"{pd.Timestamp(t):%d %b %Y %H:%M}"
 
 
+def _run_label(r):
+    return f"#{r['number']} · " + (f"{r['name']} · " if r["name"] else "") \
+        + f"{_fmt_time(r['created_at'])} · {r['task']} · " \
+        f"{r['target'] or ''} · {r['best_model'] or ''}"
+
+
 def _runs(p, user):
     rows = projects.list_runs(user, p["id"])
     st.markdown("#### Runs")
@@ -342,30 +348,153 @@ def _runs(p, user):
         st.caption("No runs yet: train on Configure & train and each run "
                    "is saved here.")
         return
+    # Numbered oldest first, so a run keeps its number as others are added.
+    for i, r in enumerate(rows):
+        r["number"] = len(rows) - i
     from components import shell
     shell.table(
-        [("When", "when"), ("Task", "task"), ("Target", "target"),
-         ("Best model", "best"), ("Metric", "metric"),
-         ("Score", "score", "num"), ("By", "by")],
-        [{"when": _fmt_time(r["created_at"]), "by": r["created_by"],
+        [("#", "number"), ("Name", "name"), ("When", "when"),
+         ("Task", "task"), ("Target", "target"), ("Best model", "best"),
+         ("Metric", "metric"), ("Score", "score", "num"), ("By", "by"),
+         ("Note", "note")],
+        [{"number": r["number"], "name": r["name"],
+          "when": _fmt_time(r["created_at"]),
+          "by": r["created_by"],
           "task": r["task"] + (" (own model)" if r["external"] else ""),
           "target": r["target"], "best": r["best_model"],
           "metric": r["metric"],
-          "score": None if r["score"] is None else f"{r['score']:.3f}"}
-         for r in rows])
-    labels = {r["id"]: f"{_fmt_time(r['created_at'])} · {r['task']} · "
-                       f"{r['target'] or ''} · {r['best_model'] or ''}"
-              for r in rows}
-    c1, c2 = st.columns([4, 1.2], vertical_alignment="bottom")
-    pick = c1.selectbox("Open a run on the results page", list(labels),
-                        format_func=labels.get, key="proj_run_pick")
-    if c2.button("Open run", width="stretch", key="proj_run_open"):
+          "score": None if r["score"] is None else f"{r['score']:.3f}",
+          "note": (r["note"][:80] + "…") if len(r["note"]) > 80
+          else r["note"]} for r in rows])
+    labels = {r["id"]: _run_label(r) for r in rows}
+    by_id = {r["id"]: r for r in rows}
+    pick = st.selectbox("Run", list(labels), format_func=labels.get,
+                        key="proj_run_pick")
+    c1, c2, _ = st.columns([1, 1, 2.5])
+    if c1.button("Open run", width="stretch", key="proj_run_open"):
         run = projects.load_run(user, p["id"], pick)
         run["_project_run_id"] = pick
         _ss()["ml_run"] = run
         _ss()["page"] = "ml_results"
         scroll.request()
         st.rerun()
+    if can_edit() and c2.button(
+            "Clone settings", width="stretch", key="proj_run_clone",
+            help="Opens Configure & train with this run's data, preparation "
+                 "and choices, to change one thing and train again."):
+        guard.action("Cloning", "The run's settings could not be loaded.",
+                     _clone, user, p, by_id[pick])
+    if can_edit():
+        with st.expander("Name and note"):
+            r = by_id[pick]
+            name = st.text_input("Name", value=r["name"],
+                                 max_chars=projects.RUN_NAME_MAX,
+                                 key=f"proj_run_name_{pick}",
+                                 placeholder="Baseline with tenure bands")
+            note = st.text_area("Note", value=r["note"], height=90,
+                                max_chars=projects.RUN_NOTE_MAX,
+                                key=f"proj_run_note_{pick}",
+                                placeholder="What this run tried, and what "
+                                            "it showed")
+            if st.button("Save", key=f"proj_run_save_{pick}",
+                         disabled=(name.strip(), note.strip()) ==
+                         (r["name"], r["note"])):
+                guard.action("Saving", "The note could not be saved.",
+                             _describe, user, p, pick, name, note)
+    if len(rows) >= 2:
+        with st.expander("Compare two runs"):
+            _compare(p, user, rows, labels)
+
+
+def _describe(user, p, run_id, name, note):
+    projects.describe_run(user, p["id"], run_id, name, note)
+    log.event(_log, "run_described")
+    st.rerun()
+
+
+def _clone(user, p, r):
+    """Load the run's dataset and preparation, put its configure choices
+    back, and open Configure & train."""
+    run = projects.load_run(user, p["id"], r["id"])
+    widgets = (run.get("config") or {}).get("widgets")
+    if run.get("external") or not widgets:
+        st.warning("This run does not keep its configure choices (it was "
+                   "trained before runs kept them, or it evaluated an "
+                   "uploaded model). Open it to read its settings instead.")
+        return
+    ss = _ss()
+    if r["dataset_id"] and r["dataset_id"] != ss.get("proj_dataset_id"):
+        df, name = projects.load_dataset(user, p["id"], r["dataset_id"])
+        for k in [k for k in ss.keys() if isinstance(k, str)
+                  and k.startswith("ml_")]:
+            del ss[k]
+        ss["ml_source"], ss["ml_df"], ss["ml_name"] = df, df, name
+        ss["ml_steps"], ss["ml_version"] = [], 0
+        ss["proj_dataset_id"] = r["dataset_id"]
+    elif "ml_source" not in ss:
+        raise AccessDenied("The run's dataset is not stored in the project.")
+    from components import ml_eda
+    ml_eda.set_steps(run.get("prep_steps") or [])
+    for k in [k for k in ss.keys() if isinstance(k, str)
+              and k.startswith("ml_w_")]:
+        del ss[k]
+    ss["ml_saved"] = dict(widgets)
+    ss["page"] = "ml_config"
+    log.event(_log, "run_cloned")
+    scroll.request()
+    st.rerun()
+
+
+def _compare(p, user, rows, labels):
+    ids = list(labels)
+    c1, c2 = st.columns(2)
+    a = c1.selectbox("Run A", ids, index=1, format_func=labels.get,
+                     key="proj_cmp_a")
+    b = c2.selectbox("Run B", ids, index=0, format_func=labels.get,
+                     key="proj_cmp_b")
+    if a == b:
+        st.caption("Pick two different runs.")
+        return
+    from components import shell
+    from logic import run_compare
+    ra = projects.load_run(user, p["id"], a)
+    rb = projects.load_run(user, p["id"], b)
+    got = run_compare.compare(ra, rb)
+    shell.table([("", "k"), ("Run A", "a"), ("Run B", "b")],
+                [{"k": k, "a": x, "b": y} for k, x, y in got["summary"]])
+    f = got["features"]
+    st.markdown("**Features**")
+    st.caption(f"{f['shared']} shared"
+               + (f" · only in A: {', '.join(f['only_a'])}"
+                  if f["only_a"] else "")
+               + (f" · only in B: {', '.join(f['only_b'])}"
+                  if f["only_b"] else "")
+               + ("" if f["only_a"] or f["only_b"] else " · the same in both"))
+    s = got["steps"]
+    if s["only_a"] or s["only_b"]:
+        st.markdown("**Preparation steps**")
+        for d in s["only_a"]:
+            st.caption(f"Only in A: {d}")
+        for d in s["only_b"]:
+            st.caption(f"Only in B: {d}")
+    st.markdown("**Settings that differ**")
+    if got["settings"]:
+        shell.table([("Setting", "k"), ("Run A", "a"), ("Run B", "b")],
+                    [{"k": k, "a": x, "b": y}
+                     for k, x, y in got["settings"]])
+    else:
+        st.caption("None: the same choices.")
+    if got["models"]:
+        st.markdown(f"**Each model's {got['metric']} on its test rows**")
+
+        def num(v):
+            return None if v is None else f"{v:.3f}"
+        shell.table([("Model", "m"), ("Run A", "a", "num"),
+                     ("Run B", "b", "num")],
+                    [{"m": m, "a": num(x), "b": num(y)}
+                     for m, x, y in got["models"]])
+        st.caption("Each run is scored on its own test rows: when the data "
+                   "or the split differs, so do the rows.")
 
 
 def _models(p, user):
