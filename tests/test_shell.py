@@ -161,3 +161,37 @@ def test_results_page_cards_and_leaderboard():
     assert at.metric[0].value == "Logistic regression"
     board = next(m.value for m in at.markdown if "ent-table" in m.value)
     assert "chip-good'>Best" in board and "chip-idle'>Baseline" in board
+
+
+def _configure_page():
+    from components import ml_config
+    ml_config.render()
+
+
+def test_configure_page_plan_panel():
+    df = pd.read_csv("sample_data/insurance_churn.csv").head(800)
+    at = AppTest.from_function(_configure_page, default_timeout=120)
+    at.session_state["ml_source"] = df
+    at.session_state["ml_df"] = df
+    at.session_state["ml_steps"] = []
+    at.run()
+    assert not at.exception
+    plan = next(m.value for m in at.markdown if "plan-rows" in m.value)
+    assert "<span>Task</span><b>Classification</b>" in plan
+    assert "<span>Target</span><b>Churned (Yes)</b>" in plan
+    models = next(m.value for m in at.markdown if "plan-models" in m.value)
+    assert "Logistic regression" in models
+    train = next(b for b in at.button if b.key == "ml_train")
+    assert not train.disabled
+    # Tuning shows beside each model in the plan.
+    next(r for r in at.radio if r.key == "ml_w_tune_mode").set_value(
+        "random").run()
+    assert not at.exception
+    models = next(m.value for m in at.markdown if "plan-models" in m.value)
+    assert "random search" in models
+    # Clustering has no target, validation or combine panels to trip on.
+    next(r for r in at.radio if r.key == "ml_w_task").set_value(
+        "clustering").run()
+    assert not at.exception
+    plan = next(m.value for m in at.markdown if "plan-rows" in m.value)
+    assert "<b>Clustering</b>" in plan and "Target" not in plan

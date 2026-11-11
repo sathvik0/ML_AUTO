@@ -12,6 +12,7 @@ state on any run that does not draw it, so every `ml_w_` key is copied into
 through session state only, never with a default argument as well: setting
 both makes Streamlit print a warning on the page.
 """
+import html
 import os
 
 import pandas as pd
@@ -639,8 +640,6 @@ STACK = {0: "Off", **{n: f"Stack the best {n}" for n in ml.STACK_TOP}}
 
 def _combine(task, folds):
     """Calibration (classification) and a stack of the best models."""
-    if task == "clustering":
-        return {}
     st.markdown("#### Combine and calibrate")
     c1, c2 = st.columns(2)
     stack = _choice("Stack the best models", STACK, f"{PREFIX}stack", 0, c1)
@@ -664,6 +663,87 @@ def _combine(task, folds):
                        "After resampling it calibrates to the resampled "
                        "shares.")
     return {"stack": int(stack), "calibration": calibration}
+
+
+TUNED = {"grid": "grid search", "random": "random search",
+         "bayes": "Bayesian search"}
+
+
+def _summary_rows(config, n_rows):
+    """(label, value) lines for what is about to be trained."""
+    task, val = config["task"], config["validation"]
+    rows = [("Task", ml.TASK_LABELS[task])]
+    if config.get("target"):
+        rows.append(("Target", config["target"] + (
+            f" ({config['positive']})" if config.get("positive") else "")))
+    rows.append(("Features", f"{len(config['numeric'])} numeric, "
+                             f"{len(config['categorical'])} categorical"))
+    if task != "clustering":
+        rows.append(("Validation", f"{val['test_size']:.0%} test"
+                     + (f", {val['folds']} folds" if val["folds"] else
+                        ", no folds")))
+        family = ml.metric_family(task, None)
+        if config.get("metric"):
+            for fam in ml.SELECTABLE:
+                if config["metric"] in ml.SELECTABLE[fam]:
+                    family = fam
+            rows.append(("Best model by",
+                         ml.metric_label(family, config["metric"])))
+    extras = []
+    if config.get("balance"):
+        extras.append("class weights")
+    if (config.get("resample") or "none") != "none":
+        extras.append(RESAMPLE[config["resample"]].split(" (")[0].lower())
+    if (config["prep"].get("cap") or "none") != "none":
+        extras.append("caps")
+    if config.get("stack"):
+        extras.append(f"stack of {config['stack']}")
+    if (config.get("calibration") or "none") != "none":
+        extras.append("calibration")
+    if extras:
+        rows.append(("Also", ", ".join(extras)))
+    return rows
+
+
+def _summary_card(df, config, errors):
+    """The right-hand panel: the plan, anything in the way, and Train.
+    Returns (train in the background, train here)."""
+    st.markdown("#### Training plan")
+    lines = "".join(
+        f"<div><span>{html.escape(k)}</span><b>{html.escape(str(v))}</b>"
+        f"</div>" for k, v in _summary_rows(config, len(df)))
+    st.markdown(f"<div class='plan-rows'>{lines}</div>",
+                unsafe_allow_html=True)
+    names = "".join(
+        f"<li>{html.escape(ml.model_label(config['task'], m['key']))}"
+        + (f" <span>{TUNED[m['search']['mode']]}</span>"
+           if m.get("search") else "") + "</li>"
+        for m in config["models"])
+    st.markdown(f"<div class='plan-models'><span>Models "
+                f"({len(config['models'])})</span><ul>{names}</ul></div>"
+                if names else "<div class='plan-models'><span>No models "
+                "chosen</span></div>", unsafe_allow_html=True)
+    for e in errors:
+        st.warning(e)
+    if not errors:
+        _plan_line(config, len(df))
+    from components import jobs_panel
+    blocked = bool(errors) or not auth.can("train")
+    background = False
+    if jobs_panel.available():
+        background = st.button(
+            "Train in the background", type="primary", width="stretch",
+            disabled=blocked, key="ml_train_bg",
+            help="Runs on a worker: keep working, leave the page, or close "
+                 "the tab; the run is saved to the project.")
+        go = st.button("Train here and wait", width="stretch",
+                       disabled=blocked, key="ml_train",
+                       help=auth.why_not("train") or "Fine for quick runs.")
+    else:
+        go = st.button("Train models", type="primary", width="stretch",
+                       disabled=blocked, help=auth.why_not("train"),
+                       key="ml_train")
+    return background, go
 
 
 def _plan_line(config, n_rows):
@@ -743,21 +823,38 @@ def render():
         jobs_panel.watch()
     from components import assistant_panel   # imports this module
     guard.section("Assistant", assistant_panel.render, df, prof)
-    task = _task()
+    # The choices on the left, one panel each; what they add up to, and the
+    # Train button, stay in view on the right.
+    main, side = st.columns([2.5, 1], gap="medium")
+
+    def panel(name):
+        return st.container(border=True, key=f"card_cfg_{name}")
+
     target = rule = positive = None
     classes = []
-    if task != "clustering":
-        picked = _target(df, prof, task)
+    with main:
+        with panel("target"):
+            task = _task()
+            picked = (_target(df, prof, task) if task != "clustering"
+                      else ())
         if picked is None:
             _save()
             return
-        target, rule, positive, classes = picked
-    numeric, categorical = _features(df, prof, task, target, rule)
-    prep = _prep(task, df, target)
-    validation, extra, balance, k_scan = _validation(df, prof, task, target,
-                                                     rule, classes)
-    models = _models(task, len(df))
-    combine = _combine(task, validation.get("folds"))
+        if picked:
+            target, rule, positive, classes = picked
+        with panel("features"):
+            numeric, categorical = _features(df, prof, task, target, rule)
+        with panel("prep"):
+            prep = _prep(task, df, target)
+        with panel("validation"):
+            validation, extra, balance, k_scan = _validation(
+                df, prof, task, target, rule, classes)
+        with panel("models"):
+            models = _models(task, len(df))
+        combine = {}
+        if task != "clustering":
+            with panel("combine"):
+                combine = _combine(task, validation.get("folds"))
     config = {"task": task, "target": target, "positive": positive,
               "target_rule": rule, "numeric": numeric,
               "categorical": categorical, "prep": prep,
@@ -766,29 +863,13 @@ def render():
               "metric": (extra or {}).get("metric"), "balance": balance,
               "resample": (extra or {}).get("resample", "none"),
               "models": models, "k_scan": k_scan, **combine}
-    st.divider()
     errors = ml.validate(df, config)
-    for e in errors:
-        st.warning(e)
+    with side, st.container(border=True, key="card_plan"):
+        background, go = _summary_card(df, config, errors)
     if not errors:
-        _plan_line(config, len(df))
-        _code(df, config)
+        with main:
+            _code(df, config)
     from components import jobs_panel
-    blocked = bool(errors) or not auth.can("train")
-    if jobs_panel.available():
-        c1, c2 = st.columns(2)
-        background = c1.button(
-            "Train in the background", type="primary", width="stretch",
-            disabled=blocked, key="ml_train_bg",
-            help="Runs on a worker: keep working, leave the page, or close "
-                 "the tab; the run is saved to the project.")
-        go = c2.button("Train models", width="stretch", disabled=blocked,
-                       help=auth.why_not("train") or "Trains here and "
-                       "waits: fine for quick runs.", key="ml_train")
-    else:
-        background = False
-        go = st.button("Train models", type="primary", disabled=blocked,
-                       help=auth.why_not("train"), key="ml_train")
     _save()
     if background:
         guard.action("Queueing", "The training job could not be queued.",
