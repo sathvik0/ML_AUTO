@@ -12,8 +12,13 @@ from utils.constants import ML_PALETTE
 
 _log = log.get("governance_panel")
 
-BADGE = {"pass": "🟢 pass", "flag": "🔴 flagged",
-         "insufficient": "⚪ too few rows to judge"}
+BADGE = {"pass": "pass", "flag": "flagged",
+         "insufficient": "too few rows to judge"}
+
+
+def _chip(status):
+    from components import shell
+    return shell.status(BADGE[status], shell.TONES.get(status, "idle"))
 
 
 def _t(x):
@@ -62,8 +67,9 @@ def _chart(attr, a, task):
 
 def _report(p, user, r, owner):
     rep = r["report"]
-    st.markdown(f"**{BADGE[r['status']]}** · {rep['rows']:,} out-of-sample "
-                f"rows · by {r['created_by']} {_t(r['created_at'])}")
+    st.markdown(f"{_chip(r['status'])} {rep['rows']:,} out-of-sample "
+                f"rows · by {r['created_by']} {_t(r['created_at'])}",
+                unsafe_allow_html=True)
     if r["accepted_by"]:
         st.info(f"Accepted by {r['accepted_by']} {_t(r['accepted_at'])}: "
                 f"{r['note']}")

@@ -131,6 +131,7 @@ def test_table_escapes_text_and_keeps_chips():
     from components import shell
     assert "chip-good" in shell.status("production")
     assert "chip-bad" in shell.status("alert")
+    assert ">OK<" in shell.status("ok")
     assert "&lt;b&gt;" in shell.status("<b>")
     at = AppTest.from_function(_table_page).run()
     html = at.markdown[0].value
@@ -195,3 +196,45 @@ def test_configure_page_plan_panel():
     assert not at.exception
     plan = next(m.value for m in at.markdown if "plan-rows" in m.value)
     assert "<b>Clustering</b>" in plan and "Target" not in plan
+
+
+def _project_page():
+    from components import project_panel, shell
+    shell.render("ml_project")
+    project_panel.render()
+
+
+def test_project_sections_show_chips_for_real_records():
+    """A project with a run, a staged model and a pending approval: each
+    section renders, with its statuses as chips."""
+    dev = {"sub": "dev", "email": "dev@localhost", "role": "admin",
+           "name": "Local developer"}
+    run = _trained()
+    pid = projects.create_project(dev, "Chips")["id"]
+    projects.share(dev, pid, "ana@example.com", "editor")
+    rid = projects.save_run(dev, pid, run)
+    v = projects.register_model(
+        dev, pid, rid, ml_eval.model_bytes(run, ml.result(run, "logistic")),
+        name="churn", model_key="logistic", task="classification",
+        target="Churned", metric="roc_auc", score=0.7)
+    deployment.set_stage(dev, pid, v["id"], "staging")
+    deployment.request_production(dev, pid, v["id"])
+
+    def page(section):
+        at = AppTest.from_function(_project_page, default_timeout=120)
+        at.session_state["proj_section"] = section
+        at.session_state["proj"] = {"id": pid, "name": "Chips",
+                                    "role": "owner"}
+        at.run()
+        assert not at.exception, section
+        return " ".join(m.value for m in at.markdown)
+
+    runs = page("runs")
+    assert "ent-table" in runs and "logistic" in runs
+    models = page("models")
+    assert "chip-info'>Staging" in models          # registry and "Now:"
+    assert "chip-warn'>Pending" in models          # stage history
+    assert "0.700" in models
+    page("operations")                             # nothing scheduled yet
+    access = page("access")
+    assert "chip-good'>Owner" in access and "chip-info'>Editor" in access

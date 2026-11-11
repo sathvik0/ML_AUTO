@@ -12,9 +12,14 @@ _log = log.get("jobs_panel")
 
 KEY = "ml_job"            # the job this session is watching
 
-LABEL = {"queued": "⏳ queued", "running": "⚙️ training",
-         "succeeded": "✅ done", "failed": "⚠️ failed",
-         "cancelled": "✖ cancelled"}
+WORD = {"queued": "Queued", "running": "Training", "succeeded": "Done",
+        "failed": "Failed", "cancelled": "Cancelled"}
+
+
+def _chip(status):
+    from components import shell
+    return shell.status(WORD.get(status, status),
+                        shell.TONES.get(status, "idle"))
 
 
 def available():
@@ -61,9 +66,9 @@ def watch():
         ss.pop(KEY, None)
         return
     with st.container(border=True):
-        st.markdown(f"**Background training** · {LABEL[j['status']]}"
+        st.markdown(f"**Background training** {_chip(j['status'])}"
                     + (f" · attempt {j['attempts']}" if j["attempts"] > 1
-                       else ""))
+                       else ""), unsafe_allow_html=True)
         if j["status"] in jobs.ACTIVE:
             st.progress(j["progress"], text=j["progress_text"] or
                         "Waiting for a worker")
@@ -111,8 +116,9 @@ def project_section(p, user):
     editor = projects.can(user, p["id"], "editor")
     for j in rows:
         c1, c2, c3 = st.columns([4, 2, 1.3], vertical_alignment="center")
-        c1.markdown(f"{LABEL[j['status']]} · {j['task'] or ''} "
-                    f"{j['target'] or ''} · by {j['created_by']}")
+        c1.markdown(f"{_chip(j['status'])} {j['task'] or ''} "
+                    f"{j['target'] or ''} · by {j['created_by']}",
+                    unsafe_allow_html=True)
         c2.caption(f"{_when(j['created_at'])}"
                    + (f" · {j['progress']:.0%} {j['progress_text']}"
                       if j["status"] in jobs.ACTIVE else

@@ -25,9 +25,10 @@ ANALYSIS = ("ml_eda", "ml_features", "ml_config", "ml_results", "ml_upload",
 
 # What a status says, as a chip's colour.
 TONES = {"production": "good", "ok": "good", "succeeded": "good",
-         "approved": "good", "staging": "info", "running": "info",
-         "queued": "info", "pending": "warn", "warning": "warn",
-         "alert": "bad", "failed": "bad", "rejected": "bad"}
+         "approved": "good", "pass": "good", "owner": "good",
+         "staging": "info", "running": "info", "queued": "info",
+         "editor": "info", "pending": "warn", "warning": "warn",
+         "alert": "bad", "failed": "bad", "rejected": "bad", "flag": "bad"}
 
 
 class Html(str):
@@ -37,8 +38,8 @@ class Html(str):
 def status(text, tone=None):
     """A small coloured label for a status."""
     tone = tone or TONES.get(str(text).lower(), "idle")
-    return Html(f"<span class='chip chip-{tone}'>"
-                f"{html.escape(str(text).capitalize())}</span>")
+    word = "OK" if str(text).lower() == "ok" else str(text).capitalize()
+    return Html(f"<span class='chip chip-{tone}'>{html.escape(word)}</span>")
 
 
 def table(columns, rows):

@@ -14,8 +14,9 @@ from utils.constants import ML_PALETTE
 
 _log = log.get("monitor_panel")
 
-BADGE = {"ok": "🟢 ok", "warning": "🟠 warning", "alert": "🔴 alert",
-         "failed": "⚪ failed", "running": "⏳ running", "": "— not run"}
+def _chip(status):
+    from components import shell
+    return shell.status(status or "not run")
 
 
 def _trend(runs, limits):
@@ -50,8 +51,9 @@ def _monitor(p, user, m, editor):
         when = (f"next {deploy_panel._t(m['next_run_at'])}"
                 if m["schedule"] and m["enabled"]
                 else "paused" if m["schedule"] else "on demand")
-        c1.markdown(f"**{m['name']}** — {m['model_name']} (production) · "
-                    f"{BADGE.get(m['last_status'], m['last_status'])}")
+        c1.markdown(f"**{m['name']}** {_chip(m['last_status'])} — "
+                    f"{m['model_name']} (production)",
+                    unsafe_allow_html=True)
         c2.caption(f"{m['schedule'] or 'manual'} · {when} · "
                    f"{'retrains to staging' if m['retrain'] == 'staging' else 'alerts only'}"
                    + (" · chat webhook" if m["webhook"] else ""))
