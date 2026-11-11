@@ -116,8 +116,8 @@ def _created():
         r1, r2 = st.columns([0.9, 0.1])
         r1.code(f"{s['into']}  =  {s['code'].splitlines()[-1].strip()}",
                 language="python")
-        if r2.button("✕", key=_k(f"remove_{i}"), help="Remove from the "
-                     "dataset"):
+        if r2.button("", icon=":material/close:", key=_k(f"remove_{i}"),
+                     help="Remove from the dataset"):
             rest = steps[:i] + steps[i + 1:]
             try:     # checked first: set_steps keeps the steps it is given
                 ml_prep.apply_steps(ss["ml_source"], rest)
@@ -198,7 +198,7 @@ def _load(item):
 
 def _ideas(df, key):
     ss = _ss()
-    with st.container(border=True):
+    with st.container(border=True, key="card_fe_ideas"):
         st.markdown("#### AI feature ideas")
         st.caption("Pick what the model will predict. The assistant reads "
                    "the columns and how strongly each already relates to "
@@ -291,10 +291,10 @@ def render():
     base_cols = set(ss["ml_df"].columns)
 
     st.markdown("## Feature engineering")
-    st.caption("Step 3 of 5. Describe a column in plain language. The "
-               "assistant writes the script, you edit it, and nothing is "
-               "added to your dataset until you confirm. Added columns are "
-               "rebuilt in every exported script.")
+    st.caption("Describe a column in plain language. The assistant writes "
+               "the script, you edit it, and nothing is added to your "
+               "dataset until you confirm. Added columns are rebuilt in "
+               "every exported script.")
 
     if auth.denied("edit"):
         return
@@ -302,6 +302,21 @@ def render():
     key = secrets.resolve("ANTHROPIC_API_KEY") if auth.can("ai") else None
     guard.section("AI feature ideas", _ideas, df, key)
 
+    builder = st.container(border=True, key="card_fe_builder")
+    builder.markdown("#### Build a column")
+    with builder:
+        _builder(df, key)
+    with st.container(border=True, key="card_fe_columns"):
+        _columns()
+    with st.container(border=True, key="card_fe_data"):
+        _data(df, base_cols)
+    with st.container(border=True, key="card_fe_explore"):
+        _explore(df, _new_columns(df, base_cols))
+
+
+def _builder(df, key):
+    """The prompt, the script pane, and Preview / Add."""
+    ss = _ss()
     # ── prompt ──────────────────────────────────────────────────────────
     # Outside the form: a widget inside one does not rerun until submit, so a
     # recording in there could never be transcribed until after it was sent.
@@ -373,16 +388,20 @@ def render():
         _stage(code, name)
         st.rerun()
 
-    # ── staged columns + confirm ────────────────────────────────────────
+
+def _columns():
+    """Columns waiting to be added, the ones already added, and on."""
+    ss = _ss()
     pend = _pending()
-    st.divider()
+    st.markdown("#### Columns")
     if pend:
         st.markdown(f"**Ready to add ({len(pend)})**")
         for nm in list(pend):
             r1, r2 = st.columns([0.9, 0.1])
             r1.code(f"{nm}  =  {pend[nm]['code'].splitlines()[-1].strip()}",
                     language="python")
-            if r2.button("✕", key=_k(f"rm_{nm}"), help="Remove"):
+            if r2.button("", icon=":material/close:", key=_k(f"rm_{nm}"),
+                         help="Remove"):
                 del pend[nm]
                 st.rerun()
     else:
@@ -390,29 +409,37 @@ def render():
     if "ml_run" in ss and pend:
         st.caption("Adding columns clears the trained models: they learned "
                    "from the file as it is now.")
+    _created()
     b1, b2 = st.columns([0.5, 0.5])
     if b1.button(f"Confirm and add {len(pend)} column"
                  f"{'s' if len(pend) != 1 else ''}",
-                 type="primary", width="stretch", disabled=not pend,
-                 key=_k("confirm")):
+                 type="primary" if pend else "secondary", width="stretch",
+                 disabled=not pend, key=_k("confirm")):
         _confirm()
         st.rerun()
-    if b2.button("Continue to Configure & train →", width="stretch",
+    if b2.button("Continue to Configure & train", width="stretch",
+                 icon=":material/arrow_forward:", icon_position="right",
+                 type="secondary" if pend else "primary",
                  key=_k("continue"),
                  help="Columns still waiting to be confirmed are not added."
                  if pend else None):
         ss["page"] = "ml_config"
         scroll.request()
         st.rerun()
-    _created()
 
-    # ── data table ──────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("#### Your data")
+
+def _new_columns(df, base_cols):
+    """New and script-made columns, which the table and picker show
+    first."""
     new_cols = [c for c in df.columns if c not in base_cols]
-    made = [s["into"] for s in ss.get("ml_steps") or []
+    made = [s["into"] for s in _ss().get("ml_steps") or []
             if s["kind"] == "script" and s["into"] in df.columns]
-    first = new_cols + [c for c in made if c not in new_cols]
+    return new_cols + [c for c in made if c not in new_cols]
+
+
+def _data(df, base_cols):
+    st.markdown("#### Your data")
+    first = _new_columns(df, base_cols)
     st.caption(f"{len(df):,} rows × {df.shape[1]} columns"
                + (f" · new: {', '.join(first)}" if first else "")
                + f" · showing the first {min(TABLE_ROWS, len(df)):,} rows.")
@@ -421,7 +448,3 @@ def render():
         show = show[first + [c for c in show.columns if c not in first]]
     st.dataframe(show, column_config=centre_numbers(show), width="stretch",
                  hide_index=True, height=320)
-
-    # ── plot ────────────────────────────────────────────────────────────
-    st.divider()
-    _explore(df, first)
