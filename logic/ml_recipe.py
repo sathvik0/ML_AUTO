@@ -463,16 +463,75 @@ def build_pipeline(recipe):
     return Pipeline(steps)
 
 
-def split(y, groups, recipe):
+def time_values(df, recipe):
+    """The time column as numbers that sort in time order (nanoseconds for
+    dates), a gap where a row has none; None without a time split. Dates
+    are read in the format fixed when the run was set up."""
+    val = recipe["validation"]
+    column = val.get("time")
+    if not column:
+        return None
+    s = df[column]
+    if pd.api.types.is_numeric_dtype(s) and not \
+            pd.api.types.is_bool_dtype(s):
+        v = pd.to_numeric(s, errors="coerce").astype("float64")
+        return v.where(np.isfinite(v)).to_numpy()
+    if not pd.api.types.is_datetime64_any_dtype(s):
+        s = pd.to_datetime(label_text(s), errors="coerce", utc=True,
+                           format=val.get("time_format") or "mixed")
+    else:
+        s = pd.to_datetime(s, errors="coerce", utc=True)
+    out = s.dt.tz_localize(None).astype("int64").astype("float64")
+    return out.where(s.notna()).to_numpy()
+
+
+def _time_split(times, share):
+    """Train strictly before test: the latest `share` of rows are the test
+    rows, and rows sharing the first test time all go to the test side, so
+    no training row is as late as any test row."""
+    order = np.argsort(times, kind="stable")
+    t = times[order]
+    n_test = max(1, int(np.ceil(share * len(t))))
+    cut = t[len(t) - n_test]
+    test = np.flatnonzero(times >= cut)
+    train = np.flatnonzero(times < cut)
+    return train, test
+
+
+def time_folds(times, k):
+    """Walk-forward folds on rows in time order: fold i validates on the
+    i-th of k later blocks and trains on every row before it. The earliest
+    block is only ever trained on. A block boundary never splits rows that
+    share a time."""
+    order = np.argsort(times, kind="stable")
+    t = times[order]
+    n = len(t)
+    starts = [int(round(n * (i + 1) / (k + 1))) for i in range(k)] + [n]
+    out = []
+    for i in range(k):
+        s = int(np.searchsorted(t, t[starts[i]], "left")) \
+            if starts[i] < n else n
+        e = (int(np.searchsorted(t, t[starts[i + 1]], "left"))
+             if starts[i + 1] < n else n)
+        if s == 0 or e <= s:
+            continue
+        out.append((np.sort(order[:s]), np.sort(order[s:e])))
+    return out
+
+
+def split(y, groups, recipe, times=None):
     """Train and test positions among the rows that have a target.
 
-    Seeded, so the same file and recipe always split the same way. Whole
+    Seeded, so the same file and recipe always split the same way. With a
+    time column the latest rows are the test (see `_time_split`). Whole
     groups go to one side when a group column is set, and the classes keep
     their shares on both sides when the split is stratified.
     """
     val = recipe["validation"]
     seed, share = recipe.get("seed", 0), float(val["test_size"])
     positions = np.arange(len(y))
+    if val.get("time"):
+        return _time_split(np.asarray(times, dtype="float64"), share)
     if groups is not None:
         gss = GroupShuffleSplit(n_splits=1, test_size=share, random_state=seed)
         train, test = next(gss.split(positions, y, groups))
@@ -484,10 +543,14 @@ def split(y, groups, recipe):
     return np.sort(train), np.sort(test)
 
 
-def folds(recipe, grouped):
-    """The cross-validation splitter for the training rows."""
+def folds(recipe, grouped, times=None):
+    """The cross-validation splitter for the training rows; with a time
+    column, the walk-forward folds themselves as (train, validate)
+    position pairs."""
     val = recipe["validation"]
     k, seed = int(val["folds"]), recipe.get("seed", 0)
+    if val.get("time"):
+        return time_folds(np.asarray(times, dtype="float64"), k)
     classify = recipe["task"] == "classification" and val.get("stratify")
     if grouped:
         return (StratifiedGroupKFold(k, shuffle=True, random_state=seed)

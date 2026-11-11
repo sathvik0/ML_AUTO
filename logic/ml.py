@@ -1017,7 +1017,10 @@ def validate(df, config) -> list:
                           f"modelled on a log scale.")
     share = float(val["test_size"])
     group = val.get("group")
-    if group:
+    time = val.get("time")
+    if time:
+        errors += _time_problems(df, recipe, y, time, share, k, group)
+    elif group:
         g = ml_recipe.label_text(df[group])[y.notna()].fillna("(blank)")
         n_groups = int(g.nunique())
         # GroupShuffleSplit sends the test share of the groups, rounded up,
@@ -1052,6 +1055,38 @@ def validate(df, config) -> list:
                       f"{MAX_FITS}. Try fewer values, fewer models or random "
                       f"search.")
     return errors
+
+
+def _time_problems(df, recipe, y, time, share, k, group):
+    """What stops a time split on `time`, in words."""
+    if time not in df.columns:
+        return [f"{time} is not in this file."]
+    if group:
+        return ["Hold out either by time or by group, not both: with a "
+                "time split the test rows are simply the latest ones."]
+    col = df[time]
+    if not _numeric_like(col):
+        recipe = {**recipe, "validation": {
+            **recipe["validation"], "time_format": ml_prep.date_format(col)}}
+    times = ml_recipe.time_values(df, recipe)[y.notna().to_numpy()]
+    gaps = int(np.isnan(times).sum())
+    if gaps:
+        return [f"{gaps:,} rows with a target have no {time} (or one that "
+                f"does not read as a date or number). Drop them first "
+                f"(Explore & prepare → Prepare → Drop rows with a gap), so "
+                f"no row lands on the wrong side of the split."]
+    distinct = len(np.unique(times))
+    if distinct < max(k, 1) + 2:
+        return [f"{time} has {distinct} distinct value"
+                f"{'' if distinct == 1 else 's'}: a time split needs at "
+                f"least {max(k, 1) + 2} (one for the test, and one more "
+                f"than the folds for training)."]
+    train, test = ml_recipe.split(y.dropna().to_numpy(), None, recipe,
+                                  times)
+    if len(train) == 0:
+        return [f"Every row shares the latest {time}, so nothing is left "
+                f"to train on. Choose a smaller test share."]
+    return []
 
 
 # ── training ────────────────────────────────────────────────────────────
@@ -1228,6 +1263,13 @@ def _fit_supervised(m, base, data, splits, family, metric, ticker):
         pred_all[tr_rows] = cv["oof"]
         if proba_all is not None:
             proba_all[tr_rows] = cv["oof_proba"]
+        gone = ~data.get("covered", np.ones(len(tr_rows), dtype=bool))
+        if gone.any():
+            p, pp = predict(task, pipe, Xtr.iloc[np.flatnonzero(gone)],
+                            classes)
+            pred_all[tr_rows[gone]] = p
+            if proba_all is not None:
+                proba_all[tr_rows[gone]] = pp
     else:
         p, pp = predict(task, pipe, Xtr, classes)
         pred_all[tr_rows] = p
@@ -1372,7 +1414,15 @@ def _train_supervised(df, config, ticker):
               if group else None)
     if groups is not None:
         groups = np.where(pd.isna(groups), "(blank)", groups).astype(str)
-    tr, te = ml_recipe.split(y, groups, base)
+    times = None
+    if base["validation"].get("time"):
+        col = base["validation"]["time"]
+        if "time_format" not in base["validation"]:
+            # Fixed now, so the script and a retrain read the dates alike.
+            base["validation"]["time_format"] = ml_prep.date_format(df[col]) \
+                if not _numeric_like(df[col]) else None
+        times = ml_recipe.time_values(df, base)[labelled]
+    tr, te = ml_recipe.split(y, groups, base, times)
     classes = [str(c) for c in _classes(y)] if task == "classification" \
         else []
     positive = None
@@ -1393,10 +1443,18 @@ def _train_supervised(df, config, ticker):
     k = int(base["validation"]["folds"])
     splits = []
     if k >= 2:
-        splitter = ml_recipe.folds(base, groups is not None)
-        splits = list(splitter.split(data["Xtr"], data["ytr"],
-                                     groups[tr] if groups is not None
-                                     else None))
+        splitter = ml_recipe.folds(base, groups is not None,
+                                   None if times is None else times[tr])
+        splits = (splitter if isinstance(splitter, list) else
+                  list(splitter.split(data["Xtr"], data["ytr"],
+                                      groups[tr] if groups is not None
+                                      else None)))
+    # Walk-forward folds never validate the earliest rows: those keep an
+    # in-sample prediction and say so.
+    covered = np.zeros(len(tr), dtype=bool)
+    for _, va in splits:
+        covered[va] = True
+    data["covered"] = covered
     results = []
     for m in [{"key": BASELINE, "params": {}}] + list(config["models"]):
         try:
@@ -1418,15 +1476,30 @@ def _train_supervised(df, config, ticker):
                       exc_info=True, model=STACK, task=task, ref=ref)
             results.append(_failed(STACK, task, ref))
     split = np.full(len(df), "no target", dtype=object)
-    split[data["train_rows"]] = ("train (out of fold)" if splits
-                                 else "train (in sample)")
+    split[data["train_rows"]] = np.where(covered, "train (out of fold)",
+                                         "train (in sample)")
     split[data["test_rows"]] = "test"
+    time_split = None
+    if times is not None:
+        col = base["validation"]["time"]
+        lab = df.iloc[lab_rows]
+        last_train = lab.iloc[tr][col]
+        first_test = lab.iloc[te][col]
+        order_tr, order_te = times[tr], times[te]
+        time_split = {
+            "column": col,
+            "train_from": str(last_train.iloc[int(np.argmin(order_tr))]),
+            "train_to": str(last_train.iloc[int(np.argmax(order_tr))]),
+            "test_from": str(first_test.iloc[int(np.argmin(order_te))]),
+            "test_to": str(first_test.iloc[int(np.argmax(order_te))]),
+            "unvalidated": int((~covered).sum()) if splits else 0}
     return {"task": task, "config": config, "base": base, "rule": rule,
             "target": target, "classes": classes, "positive": positive,
             "family": family, "metric": metric, "y": y_all, "split": split,
             "n_rows": len(df), "n_labelled": int(labelled.sum()),
             "n_train": len(tr), "n_test": len(te),
             "n_unlabelled": len(unl_rows), "folds": len(splits),
+            "time_split": time_split,
             "results": results,
             "best": _best_supervised(results, family, metric, bool(splits))}
 

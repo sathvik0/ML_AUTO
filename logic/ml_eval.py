@@ -988,6 +988,14 @@ def model_card(run, res) -> str:
                if "stopped_early" in res["search"] else "")
         lines.append(f"- Tuned: {len(res['search'])} settings compared by "
                      f"cross-validation{how}")
+    ts = run.get("time_split")
+    if ts:
+        lines.append(f"- Split by time on {ts['column']}: trained on rows "
+                     f"from {ts['train_from']} to {ts['train_to']}, tested "
+                     f"on {ts['test_from']} to {ts['test_to']}; "
+                     f"cross-validation walked forward"
+                     + (f" ({ts['unvalidated']:,} earliest training rows "
+                        f"are only trained on)" if ts["unvalidated"] else ""))
     if base.get("balance"):
         lines.append("- Classes balanced by weight")
     resampled = {"smote": "oversampled with SMOTE",
@@ -1140,7 +1148,7 @@ def scorer(metric, codes):
                        response_method="predict_proba")
 
 
-def fit(recipe, X, y, groups):
+def fit(recipe, X, y, groups, times=None):
     pipe = build_pipeline(with_caps(recipe, X))
     search = SEARCHES.get(recipe["model"])
     if not search:
@@ -1149,7 +1157,7 @@ def fit(recipe, X, y, groups):
         "log_target")
     prefix = "model__regressor__" if log_scale else "model__"
     grid = {prefix + k: v for k, v in search["space"].items()}
-    cv = folds(recipe, groups is not None)
+    cv = folds(recipe, groups is not None, times)
     score = scorer(METRIC, recipe["task"] == "classification"
                    and recipe["model"] in INTEGER_LABELS)
     if search["mode"] == "grid":
@@ -1215,13 +1223,17 @@ def main(path):
         if group:
             groups = label_text(df[group]).to_numpy()[have]
             groups = np.where(pd.isna(groups), "(blank)", groups).astype(str)
-        train, test = split(y, groups, base)
+        times = time_values(df, base)
+        if times is not None:
+            times = times[have]
+        train, test = split(y, groups, base, times)
         Xl = X.iloc[np.flatnonzero(have)]
         best = None
         for recipe in RECIPES:
             pipe = fit(recipe, Xl.iloc[train],
                        fit_labels(recipe, y[train], CLASSES),
-                       None if groups is None else groups[train])
+                       None if groups is None else groups[train],
+                       None if times is None else times[train])
             report(recipe, pipe, Xl.iloc[test], y[test])
             if recipe["model"] == BEST:
                 best = pipe
@@ -1462,6 +1474,11 @@ def config_script(df, config, steps=None) -> str:
     rule = (ml.resolve_rule(df, config["target"], config["target_rule"])
             if config.get("target_rule") else None)
     base = ml.base_recipe(config, rule)
+    time = base["validation"].get("time")
+    if time and time in df.columns and not ml._numeric_like(df[time]):
+        # The script reads the dates in the format they are written in, as
+        # training does: "mixed" would take 01/02 as January the second.
+        base["validation"]["time_format"] = ml_prep.date_format(df[time])
     recipes = []
     if config["task"] != "clustering":
         recipes.append({**base, "model": ml.BASELINE, "params": {},
