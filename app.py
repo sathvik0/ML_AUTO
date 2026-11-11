@@ -22,9 +22,11 @@ _log = log.get("app")
 
 import streamlit as st
 
-st.set_page_config(page_title="Machine Learning", layout="wide")
+st.set_page_config(page_title="ML Automation", layout="wide",
+                   page_icon=":material/query_stats:")
 
-from components import ml_unavailable, nav, project_panel, snowflake_panel
+from components import (ml_unavailable, nav, project_panel, shell,
+                        snowflake_panel)
 from utils import auth, file_loader, frames, guard, scroll
 from utils.file_loader import load_file
 
@@ -39,63 +41,6 @@ if auth.current_user() is None:
     auth.render_signed_out()
     st.stop()
 project_panel.signed_in()
-
-_LANDING_CSS = """
-<style>
-.landing-title {
-  text-align: center; font-size: 2.6rem; font-weight: 700;
-  letter-spacing: 0.3em; text-indent: 0.3em; color: #3C3489;
-  margin: 2.2rem 0 0.2rem;
-}
-.landing-tagline {
-  text-align: center; font-size: 0.95rem; letter-spacing: 0.3em;
-  text-indent: 0.3em; color: #5F5E5A; margin-bottom: 2.2rem;
-}
-.landing-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
-}
-@media (max-width: 760px) { .landing-grid { grid-template-columns: 1fr; } }
-.landing-card {
-  border: 1px solid #DDDCF5; border-radius: 16px; padding: 1.2rem 1.4rem;
-  background: #F7F7FD; height: 100%;
-}
-.landing-card h4 { margin: 0 0 0.6rem; color: #3C3489; font-size: 1.02rem; }
-.landing-card ul, .landing-card ol { margin: 0; padding-left: 1.15rem; }
-.landing-card li { font-size: 0.88rem; line-height: 1.65; }
-</style>
-"""
-
-_USES_HTML = """
-<div class='landing-card'>
-<h4>What you can do</h4>
-<ul>
-<li><b>Explore</b> — profile every column, see distributions, correlations
-and gaps, and prepare the data step by step.</li>
-<li><b>Engineer features</b> — describe a new column in plain language;
-the AI assistant writes the pandas script, you check and add it.</li>
-<li><b>Train</b> — classification, regression or clustering, several models
-at once with tuning and cross-validation, always beside a baseline.</li>
-<li><b>Evaluate</b> — leaderboards, curves, feature importance and SHAP, or
-upload a model of your own and score it on the same file.</li>
-<li><b>Export</b> — the scored file, a PowerPoint summary, and a Python
-script that rebuilds every model.</li>
-</ul>
-</div>
-"""
-
-_STEPS_HTML = """
-<div class='landing-card'>
-<h4>How to use</h4>
-<ol>
-<li>Upload a .csv or .xlsx file — any columns work.</li>
-<li>Explore &amp; prepare: review the columns and apply any cleaning steps.</li>
-<li>Feature engineering: add any columns you want to learn from.</li>
-<li>Configure: choose what to learn, the target, the features and the
-models.</li>
-<li>Train, then read the results and download what you need.</li>
-</ol>
-</div>
-"""
 
 ML_PAGES = ("ml_eda", "ml_features", "ml_config", "ml_upload", "ml_results",
             "ml_drift")
@@ -137,7 +82,7 @@ def _start_ml(df, source, name=None, save=True):
 
 def _back_to_start():
     _drop_ml_state()
-    ss["page"] = None
+    ss["page"] = "start"
     st.rerun()
 
 
@@ -169,7 +114,7 @@ def _unloadable(exc):
 if ss.get("page") == "ml_audit":
     from components import governance_panel
     scroll.apply_if_requested()
-    guard.section("Navigation", nav.render, "ml_audit")
+    guard.section("Navigation", shell.render, "ml_audit")
     guard.section("Audit log", governance_panel.audit_page)
     st.stop()
 
@@ -177,7 +122,7 @@ if ss.get("page") == "ml_audit":
 # ── The project page: needs a project, not a file ───────────────────────
 if ss.get("page") == "ml_project":
     scroll.apply_if_requested()
-    guard.section("Navigation", nav.render, "ml_project")
+    guard.section("Navigation", shell.render, "ml_project")
     guard.section("Project", project_panel.render)
     st.stop()
 
@@ -198,7 +143,8 @@ if ss.get("page") in ML_PAGES and "ml_df" in ss:
     page = ss["page"]
     if page == "ml_results" and "ml_run" not in ss:
         page = "ml_config"
-    guard.section("Navigation", nav.render, page)
+    guard.section("Navigation", shell.render, page)
+    guard.section("Steps", nav.render, page)
     if page == "ml_results":
         guard.section("Model results", ml_results.render)
     elif page == "ml_eda":
@@ -215,21 +161,46 @@ if ss.get("page") in ML_PAGES and "ml_df" in ss:
     st.stop()
 
 
-# ── Start page: upload a file or try the sample ─────────────────────────
+# ── Home, and the data page: upload a file or try the sample ────────────
 SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "sample_data",
                            "insurance_churn.csv")
 
 
-def _landing():
+def _load_sample():
+    _start_ml(file_loader.read_path(SAMPLE_PATH), "sample",
+              os.path.basename(SAMPLE_PATH))
+    st.rerun()
+
+
+def _home():
+    from components import home
+    shell.render(None)
+    home.render(_start_ml,
+                _load_sample if os.path.exists(SAMPLE_PATH) else None)
+
+
+_HOW = """
+1. **Data**: upload a file, use the sample, or read from Snowflake.
+2. **Explore & prepare**: profile the columns and clean them.
+3. **Feature engineering**: add columns, with AI help.
+4. **Configure & train**: pick the target and the models.
+5. **Results**: compare, explain, export and register.
+"""
+
+
+def _data():
+    shell.render("start")
     nav.render("start")
-    st.markdown(_LANDING_CSS, unsafe_allow_html=True)
-    st.markdown("<div class='landing-title'>MACHINE LEARNING</div>",
-                unsafe_allow_html=True)
-    st.markdown("<div class='landing-tagline'>Explore, Train, Evaluate.</div>",
-                unsafe_allow_html=True)
-    _, mid, _ = st.columns([1, 2, 1])
-    with mid:
-        guard.section("Projects", project_panel.landing, _start_ml)
+    st.markdown("## Data")
+    p = project_panel.current()
+    st.caption(f"A file loaded here becomes the dataset of {p['name']}."
+               if p else "Load a file to explore it and train models. Save "
+               "it as a project (top right) to keep the work.")
+    mid, side = st.columns([1.5, 1], gap="medium")
+    with side, st.container(border=True, key="card_how"):
+        st.markdown("#### How it works")
+        st.markdown(_HOW)
+    with mid, st.container(border=True, key="card_load"):
         uploaded = st.file_uploader("Upload a .csv or .xlsx / .xls file",
                                     type=["csv", "xlsx", "xls"],
                                     key="main_upload")
@@ -253,10 +224,6 @@ def _landing():
             # An optional panel: if it breaks, the upload still works.
             sf_df = guard.section("Snowflake", snowflake_panel.source_picker,
                                   "load")
-    st.write("")
-    _, c_info, _ = st.columns([1, 4, 1])
-    c_info.markdown(f"<div class='landing-grid'>{_USES_HTML}{_STEPS_HTML}"
-                    f"</div>", unsafe_allow_html=True)
     # Its own guard inside this page's: a dataset that fails to load is
     # reported under the controls, rather than replacing the page.
     guard.action("Loading the dataset", "That dataset could not be loaded.",
@@ -270,9 +237,7 @@ def _launch(go, uploaded, use_sample, sf_df=None):
             _start_ml(df, "upload", uploaded.name)
             st.rerun()
     elif use_sample:
-        _start_ml(file_loader.read_path(SAMPLE_PATH), "sample",
-                  os.path.basename(SAMPLE_PATH))
-        st.rerun()
+        _load_sample()
     elif sf_df is not None:
         # The picker only returns a frame on the run its Load button was
         # pressed, so this cannot re-fire on a later interaction.
@@ -280,4 +245,7 @@ def _launch(go, uploaded, use_sample, sf_df=None):
         st.rerun()
 
 
-guard.section("Start page", _landing)
+if ss.get("page") == "start":
+    guard.section("Data", _data)
+else:
+    guard.section("Home", _home)

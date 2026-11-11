@@ -1,13 +1,114 @@
-/* ── App theme: white canvas, purple accents (config.toml primaryColor) ── */
-.stApp {
+/* ── App theme, "enterprise console": a cool grey canvas, white panels, a
+   navy sidebar; blue marks only the active item and the main action
+   (config.toml primaryColor) ─────────────────────────────────────────── */
+.stApp { background: #F4F6FA; }
+
+h1, h2, h3, h4 { color: #1B2433; letter-spacing: -0.01em; }
+h2 { font-size: 1.5rem !important; padding-bottom: 0.1rem !important; }
+h4 { font-size: 1.02rem !important; }
+
+/* Cards: white panels on the canvas. */
+/* (Bordered containers carry no stable hook, so cards are keyed card_*.) */
+.stApp [class*="st-key-card_"],
+.stApp [data-testid="stMetric"] {
+    background: #FFFFFF;
+    border-color: #DCE1EA !important;
+    border-radius: 6px !important;
+}
+[data-testid="stMetricLabel"] p { color: #5B6170; font-size: 0.8rem; }
+
+/* ── Shell: the sidebar ──────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: #0F1B33;
+    min-width: 232px; max-width: 232px;
+}
+[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebar"] [data-testid="stBaseButton-headerNoPadding"] {
+    color: #B9C4DA;
+}
+[data-testid="stSidebarHeader"] { height: 0.6rem; min-height: 0; padding: 0; }
+.shell-brand {
+    display: flex; align-items: center; gap: 0.55rem;
+    font-weight: 600; font-size: 1.02rem; color: #FFFFFF;
+    padding: 0.2rem 0.35rem 0.9rem;
+}
+.shell-mark {
+    width: 22px; height: 22px; border-radius: 6px; flex: none;
     background:
-      radial-gradient(380px at 8% 2%, rgba(83, 74, 183, 0.10), transparent 70%),
-      radial-gradient(420px at 94% 96%, rgba(83, 74, 183, 0.08), transparent 70%),
-      #FFFFFF;
-    background-attachment: fixed;
+      linear-gradient(#FFFFFF, #FFFFFF) 5px 12px / 3px 6px no-repeat,
+      linear-gradient(#FFFFFF, #FFFFFF) 10px 7px / 3px 11px no-repeat,
+      linear-gradient(#FFFFFF, #FFFFFF) 15px 4px / 3px 14px no-repeat,
+      #1D5FD1;
+}
+.shell-group {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: #7F8CA8;
+    padding: 0.9rem 0.45rem 0.15rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.st-key-shell_nav [data-testid="stVerticalBlock"] { gap: 0.1rem; }
+.st-key-shell_nav button {
+    justify-content: flex-start !important;
+    border: none !important; box-shadow: none !important;
+    border-radius: 6px !important; min-height: 2.15rem;
+    padding: 0.25rem 0.55rem !important;
+    background: transparent !important;
+    color: #B9C4DA !important; font-weight: 500 !important;
+}
+.st-key-shell_nav button > div { justify-content: flex-start; }
+.st-key-shell_nav button p { font-size: 0.9rem; }
+.st-key-shell_nav button:hover:not(:disabled) {
+    background: #1A2A4A !important; color: #FFFFFF !important;
+}
+.st-key-shell_nav button:disabled { color: #56627C !important; }
+.st-key-shell_nav [data-testid="stBaseButton-primary"],
+.st-key-shell_nav [data-testid="stBaseButton-primary"]:hover {
+    background: #1F3A6E !important; color: #FFFFFF !important;
 }
 
-h1, h2, h3, h4 { color: #2E2878; }
+/* ── Shell: the top bar ──────────────────────────────────────────── */
+.st-key-shell_top {
+    border-bottom: 1px solid #DCE1EA;
+    padding-bottom: 0.55rem; margin-bottom: 0.4rem;
+}
+.shell-crumbs { font-size: 0.9rem; color: #5B6170; }
+.shell-crumbs i { font-style: normal; color: #B4B8C2; margin: 0 0.5rem; }
+.shell-crumbs b { color: #1B2433; font-weight: 600; }
+.st-key-shell_top [data-testid="stPopover"] button {
+    border-radius: 4px; background: #FFFFFF; border-color: #DCE1EA;
+    font-weight: 500;
+}
+.home-detail { color: #6B7689; font-size: 0.82rem; }
+
+/* ── Dense tables with status chips (components/shell.py: table, chip) ── */
+.ent-scroll { overflow-x: auto; }
+.ent-table {
+    width: 100%; border-collapse: collapse; font-size: 0.85rem;
+    white-space: nowrap;
+}
+.ent-table th {
+    text-align: left; font-weight: 500; color: #6B7689; font-size: 0.78rem;
+    padding: 0.45rem 0.7rem; border-bottom: 1px solid #DCE1EA;
+    white-space: nowrap;
+}
+.ent-table td {
+    padding: 0.5rem 0.7rem; border-bottom: 1px solid #EEF1F5;
+    color: #1B2433; vertical-align: middle;
+}
+.ent-table tr:last-child td { border-bottom: none; }
+.ent-table tr:hover td { background: #F8FAFD; }
+.ent-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ent-table th.num { text-align: right; }
+.ent-table .muted { color: #6B7689; }
+.chip {
+    display: inline-block; padding: 0.08rem 0.5rem; border-radius: 3px;
+    font-size: 0.76rem; font-weight: 500; white-space: nowrap;
+}
+.chip-good { background: #DFF3E7; color: #0E6B3A; }
+.chip-info { background: #E3ECFB; color: #1B4FA8; }
+.chip-warn { background: #FCEFD6; color: #8A4B06; }
+.chip-bad { background: #FBE3E3; color: #9B1C1C; }
+.chip-idle { background: #ECEEF2; color: #4A5568; }
 
 /* Header is collapsed rather than removed, so Streamlit's real "running"
    status widget still mounts — it is restyled below as the page loader. */
@@ -35,10 +136,10 @@ h1, h2, h3, h4 { color: #2E2878; }
     align-items: center;
     justify-content: center;
     padding: 0;
-    background: rgba(242, 241, 252, 0.96);
-    border: 1px solid #DDDCF5;
+    background: #FFFFFF;
+    border: 1px solid #E3E5EA;
     border-radius: 999px;
-    box-shadow: 0 8px 24px rgba(46, 40, 120, 0.18);
+    box-shadow: 0 4px 14px rgba(31, 36, 48, 0.12);
     pointer-events: none;
     z-index: 1000;
 }
@@ -66,8 +167,8 @@ h1, h2, h3, h4 { color: #2E2878; }
     width: 26px;
     height: 26px;
     background-image:
-        linear-gradient(#2E2878, #2E2878), linear-gradient(#534AB7, #534AB7),
-        linear-gradient(#8F88DD, #8F88DD), linear-gradient(#534AB7, #534AB7);
+        linear-gradient(#0F1B33, #0F1B33), linear-gradient(#1D5FD1, #1D5FD1),
+        linear-gradient(#7FA6EA, #7FA6EA), linear-gradient(#1D5FD1, #1D5FD1);
     background-repeat: no-repeat;
     background-position: 0 50%, 7px 50%, 14px 50%, 21px 50%;
     animation: eq-bars 0.9s ease-in-out infinite;
@@ -82,24 +183,29 @@ h1, h2, h3, h4 { color: #2E2878; }
 /* Hide the plotly hover toolbar (zoom/save-as-png icons) on all charts */
 .js-plotly-plot .modebar { display: none !important; }
 
-/* Rounded buttons; colours come from the theme (primary = purple). */
+/* Buttons; colours come from the theme (primary = purple). */
 .stApp [data-testid="stBaseButton-primary"],
 .stApp [data-testid="stBaseButton-secondary"] {
-    border-radius: 999px;
-    font-weight: 600;
+    border-radius: 4px;
+    font-weight: 500;
+}
+.stApp [data-testid="stBaseButton-secondary"] {
+    background: #FFFFFF; border-color: #CCD3DF;
 }
 
 [data-testid="stExpander"] {
-    border: 1px solid #DDDCF5;
-    border-radius: 14px;
+    border: 1px solid #DCE1EA;
+    border-radius: 6px;
+    background: #FFFFFF;
 }
 [data-testid="stExpander"] details { border: none; }
 
 /* ── Compact top of page ─────────────────────────────────────────── */
 .block-container {
-    padding-top: 1.2rem !important;
-    padding-bottom: 2rem !important;
+    padding: 1.1rem 2rem 2rem !important;
+    max-width: 1480px;
 }
+.stApp button p { white-space: nowrap; }
 
 [data-testid="stVerticalBlock"] { gap: 0.45rem; }
 

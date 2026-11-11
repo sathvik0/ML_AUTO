@@ -126,7 +126,7 @@ def leave():
     for k in [k for k in ss.keys() if isinstance(k, str)
               and k.startswith("ml_")]:
         del ss[k]
-    ss["page"] = None
+    ss["page"] = "start"
     scroll.request()
     st.rerun()
 

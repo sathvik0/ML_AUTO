@@ -149,7 +149,7 @@ def open_project(pid, start_ml):
     _ss()["proj"] = {"id": p["id"], "name": p["name"], "role": p["role"]}
     log.event(_log, "project_opened", role=p["role"])
     if not ws["dataset_id"]:
-        _ss()["page"] = None
+        _ss()["page"] = "start"        # nothing loaded yet: the data page
         return
     df, name = projects.load_dataset(user, pid, ws["dataset_id"])
     start_ml(df, "project", name=name, save=False)
@@ -171,18 +171,15 @@ def chip():
     if not available():
         return
     p = current()
-    label = f"📁 {p['name']}" if p else "📁 Not saved"
-    with st.popover(label, width="stretch"):
+    with st.popover(p["name"] if p else "Not saved", width="stretch",
+                    icon=":material/folder:" if p else
+                    ":material/cloud_off:"):
         if p:
             st.markdown(f"**{p['name']}**  \nYour role: {p['role']}")
             st.caption("Saved automatically: the dataset, the preparation "
                        "steps, the configure choices and every run."
                        if can_edit() else "Read-only for you: changes here "
                        "are not saved to the project.")
-            if st.button("Project page", width="stretch", key="proj_page"):
-                _ss()["page"] = "ml_project"
-                scroll.request()
-                st.rerun()
             if st.button("Close project", width="stretch", key="proj_close"):
                 close()
                 st.rerun()
@@ -225,7 +222,7 @@ def landing(start_ml):
         return
     user = auth.user()
     mine = projects.list_projects(user)
-    with st.container(border=True):
+    with st.container(border=True, key="card_projects"):
         st.markdown("#### Projects")
         if current():
             st.caption(f"Open: **{current()['name']}** — a file loaded "
@@ -464,26 +461,32 @@ def render():
         st.warning(str(e))
         close()
         return
-    st.markdown(f"## {p['name']}")
-    st.caption(f"Project · your role: {p['role']} · owner {p['owner']}")
-    from components import jobs_panel
-    guard.section("Training jobs", jobs_panel.project_section, p, user)
-    guard.section("Runs", _runs, p, user)
-    st.divider()
-    guard.section("Registered models", _models, p, user)
-    from components import deploy_panel
-    guard.section("Stages and approvals", deploy_panel.stages, p, user)
-    st.divider()
-    guard.section("Batch scoring", deploy_panel.batch, p, user)
-    st.divider()
-    from components import monitor_panel
-    guard.section("Monitoring", monitor_panel.render, p, user)
-    st.divider()
-    from components import governance_panel
-    guard.section("Fairness", governance_panel.fairness_section, p, user)
-    st.divider()
-    guard.section("Model API", deploy_panel.api_keys, p, user)
-    st.divider()
-    guard.section("Members", _members, p, user)
-    guard.section("Activity", governance_panel.activity_section, p, user)
-    guard.section("Settings", _settings, p, user)
+    from components import (deploy_panel, governance_panel, jobs_panel,
+                            monitor_panel, shell)
+    # One section at a time, chosen in the sidebar: each has its own
+    # queries, and the page used to run them all.
+    which = shell.section()
+    title = next(label for key, label, _ in shell.SECTIONS if key == which)
+    st.markdown(f"## {title}")
+    st.caption(f"{p['name']} · your role: {p['role']} · owner {p['owner']}")
+
+    def card(name, fn, *args):
+        with st.container(border=True,
+                          key="card_" + name.lower().replace(" ", "_")):
+            guard.section(name, fn, *args)
+
+    if which == "runs":
+        card("Training jobs", jobs_panel.project_section, p, user)
+        card("Runs", _runs, p, user)
+    elif which == "models":
+        card("Registered models", _models, p, user)
+        card("Stages and approvals", deploy_panel.stages, p, user)
+        card("Fairness", governance_panel.fairness_section, p, user)
+        card("Model API", deploy_panel.api_keys, p, user)
+    elif which == "operations":
+        card("Monitoring", monitor_panel.render, p, user)
+        card("Batch scoring", deploy_panel.batch, p, user)
+    else:
+        card("Members", _members, p, user)
+        guard.section("Activity", governance_panel.activity_section, p, user)
+        guard.section("Settings", _settings, p, user)
