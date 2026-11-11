@@ -100,6 +100,25 @@ h4 { font-size: 1.02rem !important; }
 .ent-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .ent-table th.num { text-align: right; }
 .ent-table .muted { color: #6B7689; }
+/* ── Configure: the plan panel stays in view beside the choices ──── */
+[data-testid="stColumn"]:has(> div > .st-key-card_plan),
+[data-testid="stColumn"]:has(.st-key-card_plan) {
+    position: sticky; top: 0.75rem; align-self: flex-start;
+}
+.plan-rows div {
+    display: flex; justify-content: space-between; gap: 0.8rem;
+    padding: 0.32rem 0; border-bottom: 1px solid #EEF1F5;
+    font-size: 0.85rem;
+}
+.plan-rows span, .plan-models > span { color: #6B7689; }
+.plan-rows b { font-weight: 500; color: #1B2433; text-align: right; }
+.plan-models { font-size: 0.85rem; padding-top: 0.45rem; }
+.plan-models ul { margin: 0.2rem 0 0; padding-left: 1.1rem; }
+.plan-models li { line-height: 1.6; }
+.plan-models li span {
+    color: #1B4FA8; background: #E3ECFB; border-radius: 3px;
+    padding: 0 0.35rem; font-size: 0.74rem; margin-left: 0.3rem;
+}
 .chip {
     display: inline-block; padding: 0.08rem 0.5rem; border-radius: 3px;
     font-size: 0.76rem; font-weight: 500; white-space: nowrap;
