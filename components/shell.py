@@ -38,8 +38,8 @@ class Html(str):
 def status(text, tone=None):
     """A small coloured label for a status."""
     tone = tone or TONES.get(str(text).lower(), "idle")
-    return Html(f"<span class='chip chip-{tone}'>"
-                f"{html.escape(str(text).capitalize())}</span>")
+    word = "OK" if str(text).lower() == "ok" else str(text).capitalize()
+    return Html(f"<span class='chip chip-{tone}'>{html.escape(word)}</span>")
 
 
 def table(columns, rows):

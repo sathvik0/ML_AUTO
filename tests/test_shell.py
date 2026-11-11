@@ -131,6 +131,7 @@ def test_table_escapes_text_and_keeps_chips():
     from components import shell
     assert "chip-good" in shell.status("production")
     assert "chip-bad" in shell.status("alert")
+    assert ">OK<" in shell.status("ok")
     assert "&lt;b&gt;" in shell.status("<b>")
     at = AppTest.from_function(_table_page).run()
     html = at.markdown[0].value
