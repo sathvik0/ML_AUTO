@@ -16,6 +16,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from logic import ml, ml_eval, ml_explore, ml_prep, ml_recipe
+from components import shell
 from utils import auth, guard, log, scroll
 from utils.constants import ML_PALETTE
 
@@ -108,20 +109,27 @@ def _header(df):
         shape += (f" after {len(steps)} preparation step"
                   f"{'' if len(steps) == 1 else 's'} (loaded: "
                   f"{len(src):,} × {src.shape[1]})")
-    st.caption(f"Step 2 of 5. {shape}. Every row is read; only drawings are "
-               f"thinned.")
+    st.caption(f"{shape}. Every row is read; only drawings are thinned.")
 
 
 # ── explore ─────────────────────────────────────────────────────────────
+# Why a column is off by default, as one word for its chip.
+KIND_WORD = {"id": "Identifier", "constant": "Constant", "date": "Date",
+             "postal": "Postal code", "high_card": "Too many values",
+             "many_levels": "Many values", "derived": "Copy",
+             "duplicate": "Duplicate"}
+
+
 def _overview(df, prof):
     o = _cached("overview", ml_explore.overview, df, prof)
     c = st.columns(6)
-    c[0].metric("Rows", f"{o['rows']:,}")
-    c[1].metric("Columns", f"{o['columns']:,}")
-    c[2].metric("Numbers / categories", f"{o['numeric']} / {o['categorical']}")
-    c[3].metric("Gaps", f"{o['gaps']:,}")
-    c[4].metric("Rows with a gap", f"{o['rows_with_gap']:,}")
-    c[5].metric("Duplicate rows", f"{o['duplicate_rows']:,}")
+    c[0].metric("Rows", f"{o['rows']:,}", border=True)
+    c[1].metric("Columns", f"{o['columns']:,}", border=True)
+    c[2].metric("Numbers / categories",
+                f"{o['numeric']} / {o['categorical']}", border=True)
+    c[3].metric("Gaps", f"{o['gaps']:,}", border=True)
+    c[4].metric("Rows with a gap", f"{o['rows_with_gap']:,}", border=True)
+    c[5].metric("Duplicate rows", f"{o['duplicate_rows']:,}", border=True)
     st.caption(f"Gaps are {o['gap_share']:.1%} of cells. A gap is an empty "
                f"cell, or an infinite number, which every model reads as "
                f"empty too. In memory: {o['memory_mb']:,.1f} MB.")
@@ -130,11 +138,15 @@ def _overview(df, prof):
     st.caption(f"The first {min(PREVIEW_ROWS, len(df)):,} of {len(df):,} "
                f"rows; every number on this page covers all of them.")
     st.markdown("**What the configure page will do with each column**")
-    table = prof[["column", "type", "unique", "missing", "use", "note"]] \
-        .rename(columns={"column": "Column", "type": "Type",
-                         "unique": "Distinct", "missing": "Gaps",
-                         "use": "Used by default", "note": "Why not"})
-    st.dataframe(table, hide_index=True, width="stretch")
+    shell.table(
+        [("Column", "column"), ("Type", "type"),
+         ("Distinct", "unique", "num"), ("Gaps", "missing", "num"),
+         ("Used", "use"), ("Note", "note")],
+        [{"column": r["column"], "type": r["type"],
+          "unique": f"{r['unique']:,}", "missing": f"{r['missing']:,}",
+          "use": shell.status("Used", "good") if r["use"] else
+          shell.status(KIND_WORD.get(r["kind"], "Off"), "idle"),
+          "note": r["note"]} for r in prof.to_dict("records")])
 
 
 def _columns_tab(df, prof):
@@ -752,25 +764,31 @@ def render():
     names = ["Overview", "Columns", "Distributions", "Gaps", "Correlations",
              "Target", "Outliers", "Prepare"]
     tabs = dict(zip(names, st.tabs(names)))
-    with tabs["Overview"]:
+
+    def panel(name):
+        # Each tab's content on one white panel.
+        return st.container(border=True, key=f"card_eda_{name.lower()}")
+
+    with tabs["Overview"], panel("Overview"):
         guard.section("Overview", _overview, df, prof)
-    with tabs["Columns"]:
+    with tabs["Columns"], panel("Columns"):
         guard.section("Columns", _columns_tab, df, prof)
-    with tabs["Distributions"]:
+    with tabs["Distributions"], panel("Distributions"):
         _distributions(df, prof)
-    with tabs["Gaps"]:
+    with tabs["Gaps"], panel("Gaps"):
         guard.section("Gaps", _gaps_tab, df, prof)
-    with tabs["Correlations"]:
+    with tabs["Correlations"], panel("Correlations"):
         _correlations(df, prof)
-    with tabs["Target"]:
+    with tabs["Target"], panel("Target"):
         _target_tab(df, prof)
-    with tabs["Outliers"]:
+    with tabs["Outliers"], panel("Outliers"):
         _outliers(df, prof)
-    with tabs["Prepare"]:
+    with tabs["Prepare"], panel("Prepare"):
         _prepare(df, prof)
-    st.divider()
-    if st.button("Continue to Feature engineering →", type="primary",
-                 key="ml_e_continue"):
+    _, right = st.columns([3, 1.2])
+    if right.button("Continue to Feature engineering", type="primary",
+                    icon=":material/arrow_forward:", icon_position="right",
+                    width="stretch", key="ml_e_continue"):
         ss["page"] = "ml_features"
         scroll.request()
         st.rerun()

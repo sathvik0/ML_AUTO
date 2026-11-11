@@ -238,3 +238,44 @@ def test_project_sections_show_chips_for_real_records():
     page("operations")                             # nothing scheduled yet
     access = page("access")
     assert "chip-good'>Owner" in access and "chip-info'>Editor" in access
+
+
+def _explore_page():
+    from components import ml_eda
+    ml_eda.render()
+
+
+def _features_page():
+    from components import ml_features
+    ml_features.render()
+
+
+def _loaded(page):
+    df = pd.read_csv("sample_data/insurance_churn.csv").head(800)
+    at = AppTest.from_function(page, default_timeout=120)
+    at.session_state["ml_source"] = df
+    at.session_state["ml_df"] = df
+    at.session_state["ml_steps"] = []
+    return at.run()
+
+
+def test_explore_page_cards_and_column_plan():
+    at = _loaded(_explore_page)
+    assert not at.exception
+    assert [m.label for m in at.metric][:2] == ["Rows", "Columns"]
+    plan = next(m.value for m in at.markdown if "ent-table" in m.value)
+    assert "chip-good'>Used" in plan
+    assert "chip-idle'>Identifier" in plan            # Customer_ID is off
+    assert any(b.key == "ml_e_continue" for b in at.button)
+
+
+def test_feature_engineering_page_sections():
+    at = _loaded(_features_page)
+    assert not at.exception
+    heads = [m.value for m in at.markdown if m.value.startswith("#### ")]
+    for h in ("#### Build a column", "#### Columns", "#### Your data",
+              "#### Explore the columns"):
+        assert h in heads, h
+    confirm = next(b for b in at.button if (b.key or "").endswith(
+        "confirm"))
+    assert confirm.disabled                         # nothing waiting yet
