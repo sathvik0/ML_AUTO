@@ -355,7 +355,30 @@ def list_runs(user, project_id):
                  "best_model": r.best_model, "metric": r.metric,
                  "score": r.score, "leaderboard": r.leaderboard,
                  "external": r.external, "created_by": r.created_by,
-                 "created_at": r.created_at} for r in rows]
+                 "created_at": r.created_at, "name": r.name or "",
+                 "note": r.note or "", "dataset_id": r.dataset_id}
+                for r in rows]
+
+
+RUN_NAME_MAX = 200
+RUN_NOTE_MAX = 4000
+
+
+def describe_run(user, project_id, run_id, name, note):
+    """Give a run a name and a note (what it tried, what was learnt)."""
+    name, note = (name or "").strip(), (note or "").strip()
+    if len(name) > RUN_NAME_MAX or len(note) > RUN_NOTE_MAX:
+        raise AccessDenied(f"Names are up to {RUN_NAME_MAX} characters and "
+                           f"notes up to {RUN_NOTE_MAX}.")
+    with db.session() as s:
+        _need(s, user, project_id, "editor")
+        r = s.get(db.Run, run_id)
+        if r is None or r.project_id != project_id:
+            raise AccessDenied("That run is not in this project.")
+        r.name, r.note = name, note
+        audit.record(s, user, "run.describe", project_id, "run", r.id,
+                     name=name, note_chars=len(note))
+        s.commit()
 
 
 def load_run(user, project_id, run_id):
