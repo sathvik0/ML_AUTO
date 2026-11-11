@@ -279,3 +279,24 @@ def test_feature_engineering_page_sections():
     confirm = next(b for b in at.button if (b.key or "").endswith(
         "confirm"))
     assert confirm.disabled                         # nothing waiting yet
+
+
+def test_configure_page_time_split():
+    df = pd.read_csv("sample_data/insurance_churn.csv").head(800)
+    df["Renewal_Date"] = (pd.Timestamp("2024-01-01") + pd.to_timedelta(
+        range(len(df)), unit="D")).strftime("%Y-%m-%d")
+    at = AppTest.from_function(_configure_page, default_timeout=120)
+    at.session_state["ml_source"] = df
+    at.session_state["ml_df"] = df
+    at.session_state["ml_steps"] = []
+    at.run()
+    next(r for r in at.radio if r.key == "ml_w_split").set_value(
+        "time").run()
+    assert not at.exception
+    assert next(s for s in at.selectbox if s.key == "ml_w_time_col").value \
+        == "Renewal_Date"                       # the date column first
+    assert next(s for s in at.selectbox if s.key == "ml_w_group").disabled
+    plan = next(m.value for m in at.markdown if "plan-rows" in m.value)
+    assert "latest as test" in plan and "walk-forward folds" in plan
+    assert "<b>Renewal_Date</b>" in plan
+    assert not next(b for b in at.button if b.key == "ml_train").disabled

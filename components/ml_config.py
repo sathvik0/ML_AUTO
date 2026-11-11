@@ -70,6 +70,7 @@ ENCODING_HELP = {
 CAPS = {"none": "Off",
         "pct": "At the 1st and 99th percentiles",
         "iqr": "At the quartile fences (1.5 × IQR)"}
+SPLITS = {"random": "Random", "time": "By time: test on the latest rows"}
 RESAMPLE = {"none": "Off",
             "smote": "Oversample the smaller classes (SMOTE)",
             "under": "Undersample the larger classes"}
@@ -440,6 +441,29 @@ def _validation(df, prof, task, target, rule, classes):
         return {"test_size": 0.0, "folds": 0, "stratify": False,
                 "group": None}, None, False, k_scan
     st.markdown("#### Validation")
+    # Dates first: a time split is what they are for. Numbers that count
+    # time (a month index, a year) work too.
+    dates = [c for c in prof.loc[prof["kind"] == "date", "column"]
+             if c != target]
+    numbers = [c for c, t in zip(prof["column"], prof["type"])
+               if t == "numeric" and c != target and c not in dates]
+    s_key = f"{PREFIX}split"
+    _seed(s_key, "random", list(SPLITS))
+    how = st.radio("Split", list(SPLITS), key=s_key, horizontal=True,
+                   format_func=SPLITS.get)
+    time = None
+    if how == "time":
+        t_key = f"{PREFIX}time_col"
+        _seed(t_key, (dates + numbers + [None])[0], dates + numbers)
+        time = st.selectbox("Time column", dates + numbers, key=t_key,
+                            help="The date (or number) each row's outcome "
+                                 "belongs to: a renewal date, a month.")
+        st.caption("The latest rows are the test rows, and every training "
+                   "row comes before them. Cross-validation walks forward: "
+                   "each fold trains on the rows before it and validates "
+                   "on the next block, so the earliest block is only "
+                   "trained on. Use it whenever new data will come from "
+                   "later dates than the training data.")
     c1, c2, c3 = st.columns(3)
     share_key = f"{PREFIX}test_share"
     _seed(share_key, 20)
@@ -453,7 +477,11 @@ def _validation(df, prof, task, target, rule, classes):
     group_key = f"{PREFIX}group"
     _seed(group_key, NO_GROUP, [NO_GROUP] + groups)
     group = c3.selectbox("Hold out whole groups", [NO_GROUP] + groups,
-                         key=group_key)
+                         key=group_key, disabled=time is not None,
+                         help="Not with a time split: the test rows are "
+                              "the latest ones." if time else None)
+    if time:
+        group = NO_GROUP
     if group != NO_GROUP:
         st.caption(f"Every row of a {group} lands on the same side, so the "
                    f"test shows how the model does on {group} values it has "
@@ -480,7 +508,8 @@ def _validation(df, prof, task, target, rule, classes):
         strat_key = f"{PREFIX}stratify"
         _seed(strat_key, True)
         stratify = c6.checkbox("Same class shares in training and test",
-                               key=strat_key, disabled=group != NO_GROUP)
+                               key=strat_key,
+                               disabled=group != NO_GROUP or time is not None)
         if rare:
             st.info(f"The smallest class is {share:.1%} of the rows (below "
                     f"{ml.IMBALANCED:.0%}), so this starts on "
@@ -510,8 +539,9 @@ def _validation(df, prof, task, target, rule, classes):
                       "twice over." if balance and resample != "none"
                       else ""))
     return ({"test_size": test_share / 100, "folds": int(folds),
-             "stratify": bool(stratify) and group == NO_GROUP,
-             "group": None if group == NO_GROUP else group},
+             "stratify": bool(stratify) and group == NO_GROUP and not time,
+             "group": None if group == NO_GROUP else group,
+             "time": time},
             {"seed": int(seed), "metric": metric, "resample": resample},
             balance, None)
 
@@ -679,9 +709,13 @@ def _summary_rows(config, n_rows):
     rows.append(("Features", f"{len(config['numeric'])} numeric, "
                              f"{len(config['categorical'])} categorical"))
     if task != "clustering":
-        rows.append(("Validation", f"{val['test_size']:.0%} test"
-                     + (f", {val['folds']} folds" if val["folds"] else
-                        ", no folds")))
+        rows.append(("Validation", f"{val['test_size']:.0%} "
+                     + ("latest as test" if val.get("time") else "test")
+                     + (f", {val['folds']} "
+                        + ("walk-forward folds" if val.get("time")
+                           else "folds") if val["folds"] else ", no folds")))
+        if val.get("time"):
+            rows.append(("Time column", val["time"]))
         family = ml.metric_family(task, None)
         if config.get("metric"):
             for fam in ml.SELECTABLE:

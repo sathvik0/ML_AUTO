@@ -98,8 +98,14 @@ def _summary(run):
            if run.get("positive") else "")
     unl = (f", {run['n_unlabelled']:,} with no target scored"
            if run["n_unlabelled"] else "")
-    folds = (f" · {run['folds']}-fold cross-validation" if run["folds"]
-             else "")
+    folds = (f" · {run['folds']}-fold "
+             + ("walk-forward " if run.get("time_split") else "")
+             + "cross-validation" if run["folds"] else "")
+    ts = run.get("time_split")
+    if ts:
+        folds += (f" · split by {ts['column']}: trained on {ts['train_from']}"
+                  f" to {ts['train_to']}, tested on {ts['test_from']} to "
+                  f"{ts['test_to']}")
     return (f"{ml.TASK_LABELS[run['task']]} of "
             f"{ml_eval.describe_target(run)}{pos} · {run['n_train']:,} rows "
             f"to train, {run['n_test']:,} to test{unl} · {feats} feature"
