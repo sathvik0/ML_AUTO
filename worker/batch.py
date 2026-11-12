@@ -12,7 +12,7 @@ work (no database).
 import argparse
 import sys
 
-from logic import deployment, monitoring
+from logic import deployment, monitoring, prediction_log
 from utils import db, log
 
 _log = log.get("batch")
@@ -33,6 +33,11 @@ def main(argv=None):
         return 1
     if args.due:
         results = deployment.run_due() + monitoring.run_due()
+        try:
+            prediction_log.purge()
+        except Exception:
+            log.event(_log, "prediction_log_purge_failed", level=40,
+                      exc_info=True)
     elif args.job:
         results = [deployment.run_job(args.job, triggered_by="manual")]
     else:

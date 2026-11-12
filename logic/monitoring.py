@@ -45,11 +45,20 @@ STATUS_ORDER = ("ok", "warning", "alert")
 
 
 # ── monitors ────────────────────────────────────────────────────────────
+# A monitor reads newer rows from where a batch job can, or from the
+# requests the model API answered (logic.prediction_log).
+SOURCES = deployment.SOURCES + ("logged",)
+
+
 def create_monitor(user, project_id, *, name, model_name, source,
                    schedule="", thresholds=None, webhook="",
                    retrain="notify"):
-    if source.get("type") not in deployment.SOURCES:
+    if source.get("type") not in SOURCES:
         raise AccessDenied("Unknown source.")
+    outcomes = source.get("outcomes")
+    if outcomes and (outcomes.get("source", {}).get("type")
+                     not in deployment.SOURCES or not outcomes.get("id")):
+        raise AccessDenied("Outcomes need a source and an ID column.")
     if retrain not in RETRAIN:
         raise AccessDenied("Unknown retraining policy.")
     why = alerts.webhook_problem(webhook)
@@ -359,6 +368,47 @@ def _message(m, version, status, summary, retrained):
     return "\n".join(lines)
 
 
+def _rows(mon, version, snowflake):
+    """The newer rows a check compares with the training data."""
+    source = mon["source"]
+    if source["type"] != "logged":
+        return deployment._read_source(mon["project_id"], source, snowflake)
+    from logic import prediction_log
+    days = int(source.get("days") or 30)
+    rows = prediction_log.window(mon["project_id"], mon["model_name"], days)
+    if rows.empty:
+        raise CheckError(f"No requests to {mon['model_name']} were logged "
+                         f"in the last {days} days.")
+    outcomes = source.get("outcomes")
+    if outcomes:
+        rows = _with_outcomes(mon, version, rows, outcomes, snowflake)
+    return rows.drop(columns=["_requested_at"], errors="ignore")
+
+
+def _with_outcomes(mon, version, rows, outcomes, snowflake):
+    """The logged rows with the actual outcome where it has arrived: the
+    latest request for each ID, joined on that ID. Accuracy is then
+    measured on the rows that have one; drift uses them all."""
+    key = outcomes["id"]
+    target = (version.get("target") or (deployment.model_info(version)
+                                        .get("recipe") or {}).get("target")
+              or "").strip()
+    actual = deployment._read_source(mon["project_id"], outcomes["source"],
+                                     snowflake)
+    for col, where in ((key, "the logged requests"), (key, "the outcomes"),
+                       (target, "the outcomes")):
+        frame = rows if where == "the logged requests" else actual
+        if not col or col not in frame.columns:
+            raise CheckError(f"{col or 'The target'} is not in {where}.")
+    latest = rows.sort_values("_requested_at").drop_duplicates(key,
+                                                                keep="last")
+    latest = latest.drop(columns=[target], errors="ignore")
+    actual = actual[[key, target]].drop_duplicates(key, keep="last")
+    latest[key] = latest[key].astype(str)
+    actual[key] = actual[key].astype(str)
+    return latest.merge(actual, on=key, how="left")
+
+
 def run_monitor(monitor_id, triggered_by="schedule", snowflake=None,
                 sender=None):
     """One check, recorded; alerts and retraining as configured. Returns
@@ -391,8 +441,7 @@ def run_monitor(monitor_id, triggered_by="schedule", snowflake=None,
             version.update(metric=v.metric, score=v.score)
         info = deployment.model_info(version)
         train_run = _training_run(version)
-        rows = deployment._read_source(mon["project_id"], mon["source"],
-                                       snowflake)
+        rows = _rows(mon, version, snowflake)
         status, summary, current = check(version, info, train_run, rows,
                                          mon["limits"])
         waiting = (_waiting_retrain(mon["project_id"], version)

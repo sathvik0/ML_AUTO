@@ -68,6 +68,16 @@ def get(key) -> bytes:
     return path.read_bytes()
 
 
+def delete(key):
+    """One object; nothing to do when it is already gone."""
+    if _bucket():
+        _s3().delete_object(Bucket=_bucket(), Key=key)
+        return
+    path = _local_path(key)
+    if path.exists():
+        path.unlink()
+
+
 def delete_prefix(prefix):
     """Every object under `prefix` (a deleted project's files)."""
     if _bucket():
