@@ -199,6 +199,29 @@ class Transition(Base):
     decision_note: Mapped[str] = mapped_column(Text, default="")
 
 
+class PredictionLog(Base):
+    """One request the model API answered (logic.prediction_log); its rows
+    and answers are a Parquet file in the project's storage."""
+    __tablename__ = "prediction_logs"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True,
+                                    default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="SET NULL"), nullable=True)
+    model_name: Mapped[str] = mapped_column(String(200))
+    version: Mapped[int] = mapped_column(Integer)
+    stage: Mapped[str] = mapped_column(String(16))
+    source: Mapped[str] = mapped_column(String(16))
+    caller: Mapped[str] = mapped_column(String(200))
+    rows: Mapped[int] = mapped_column(Integer)
+    flagged: Mapped[int] = mapped_column(Integer)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    object_key: Mapped[str] = mapped_column(String(500))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                         default=now, index=True)
+
+
 class ApiKey(Base):
     """A project's key for the model API. Only a hash is stored; the key
     itself is shown once, when it is made."""

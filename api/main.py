@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from logic import deployment, serving
+from logic import deployment, prediction_log, serving
 from utils import db, log
 
 log.setup()
@@ -52,22 +52,34 @@ class PredictResponse(BaseModel):
     rows: int
     predictions: list[Any]
     outputs: list[dict[str, Any]] = Field(
-        description="Every column the model adds, per row: the prediction "
-                    "and, for classifiers, each class's probability.")
+        description="Every column the model adds, per row: the prediction; "
+                    "for classifiers, each class's probability; "
+                    "ML_Warnings when an input is outside what the model "
+                    "was trained on (null otherwise); and with explain, "
+                    "ML_Reasons.")
+    request_id: str | None = Field(
+        None, description="The id this request is kept under in the "
+                          "project's prediction log (null if it could not "
+                          "be kept).")
 
 
-def project_for_key(authorization: str | None = Header(None),
-                    x_api_key: str | None = Header(None)):
+def api_caller(authorization: str | None = Header(None),
+               x_api_key: str | None = Header(None)):
+    """{"project_id", "name"} of the key the request carries."""
     key = x_api_key
     if not key and authorization and authorization.lower().startswith(
             "bearer "):
         key = authorization[7:].strip()
-    project_id = deployment.authenticate(key)
-    if project_id is None:
+    got = deployment.caller(key)
+    if got is None:
         log.event(_log, "api_unauthorised", level=logging.WARNING)
         raise HTTPException(401, "A valid API key is required.",
                             headers={"WWW-Authenticate": "Bearer"})
-    return project_id
+    return got
+
+
+def project_for_key(got: dict = Depends(api_caller)):
+    return got["project_id"]
 
 
 @app.get("/api/health")
@@ -98,7 +110,14 @@ def _json(frame):
 def predict(name: str, body: PredictRequest,
             stage: str = Query("production", pattern="^(production|staging)$"),
             version: int | None = Query(None, ge=1),
-            project_id: str = Depends(project_for_key)):
+            explain: int = Query(0, ge=0, le=serving.MAX_REASONS,
+                                 description="Add ML_Reasons: the top N "
+                                             "inputs behind each "
+                                             "prediction (up to "
+                                             f"{serving.MAX_EXPLAIN_ROWS:,} "
+                                             "rows)."),
+            who: dict = Depends(api_caller)):
+    project_id = who["project_id"]
     t0 = time.perf_counter()
     if len(body.rows) > serving.MAX_API_ROWS:
         raise HTTPException(413, f"At most {serving.MAX_API_ROWS:,} rows "
@@ -108,17 +127,28 @@ def predict(name: str, body: PredictRequest,
     if v is None:
         what = f"version {version}" if version else f"a {stage} version"
         raise HTTPException(404, f"Model {name} has no {what}.")
+    rows = pd.DataFrame(body.rows)
     try:
-        out = serving.score(deployment.model_info(v),
-                            pd.DataFrame(body.rows))
+        out = serving.score(deployment.model_info(v), rows, explain=explain)
     except serving.ScoringError as e:
         raise HTTPException(422, str(e)) from None
     cols = serving.output_columns(out)
     main = "ML_Cluster" if v["task"] == "clustering" else "ML_Prediction"
+    ms = round((time.perf_counter() - t0) * 1000)
+    request_id = None
+    try:
+        request_id = prediction_log.record(
+            project_id, v, rows, out, source="api",
+            caller=f"key: {who['name']}", ms=ms)
+    except Exception:
+        # The answer still goes back; the gap is on record for operators.
+        log.event(_log, "prediction_log_failed", level=logging.ERROR,
+                  exc_info=True, ref=log.incident_id())
     log.event(_log, "api_predicted", rows=len(out), task=v["task"],
-              version=v["version"],
-              ms=round((time.perf_counter() - t0) * 1000))
+              version=v["version"], ms=ms,
+              flagged=int(out["ML_Warnings"].notna().sum())
+              if "ML_Warnings" in out.columns else 0)
     return {"model": v["name"], "version": v["version"],
             "stage": v["stage"], "task": v["task"], "rows": len(out),
             "predictions": [r[main] for r in _json(out[[main]])],
-            "outputs": _json(out[cols])}
+            "outputs": _json(out[cols]), "request_id": request_id}

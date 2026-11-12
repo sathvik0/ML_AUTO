@@ -636,6 +636,7 @@ def render():
         card("Stages and approvals", deploy_panel.stages, p, user)
         card("Fairness", governance_panel.fairness_section, p, user)
         card("Model API", deploy_panel.api_keys, p, user)
+        card("Recent predictions", deploy_panel.prediction_logs, p, user)
     elif which == "operations":
         card("Monitoring", monitor_panel.render, p, user)
         card("Batch scoring", deploy_panel.batch, p, user)

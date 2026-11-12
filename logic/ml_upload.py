@@ -329,6 +329,7 @@ def _from_bundle(bundle):
             "cluster_names": bundle.get("cluster_names"),
             "prep_steps": list(bundle.get("prep_steps") or []),
             "threshold": bundle.get("threshold"),
+            "inputs": bundle.get("inputs"),
             "trained": bundle.get("created"),
             "sklearn": bundle.get("sklearn")}
 
@@ -526,6 +527,7 @@ def _from_external(obj):
             "positive": obj.get("positive"),
             "prep_steps": list(obj.get("prep_steps") or []),
             "threshold": obj.get("threshold"),
+            "inputs": obj.get("inputs"),
             "recipe": {"task": task, "target": obj.get("target"),
                        "target_rule": None},
             "trained": obj.get("created"), "sklearn": obj.get("sklearn"),
