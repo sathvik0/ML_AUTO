@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 from components import (export_page, ml_evaluate, ml_summary, project_panel,
                         shell,
                         snowflake_panel)
-from logic import ml, ml_eval
+from logic import ml, ml_eval, ml_stats
 from utils import auth, guard, log
 from utils.constants import ML_PALETTE
 from utils.file_loader import load_file
@@ -142,6 +142,41 @@ def _verdict(run):
 SETTINGS_SHOWN = 70       # characters of a model's settings in the table
 
 
+def _stats(run):
+    """(intervals, paired check) on the run's metric, kept on the run;
+    (None, None) until asked for when the test rows are many."""
+    if run["task"] == "clustering":
+        return None, None
+    kept = run.setdefault("_stats", {})
+    if run["metric"] in kept:
+        return kept[run["metric"]]
+    n = int((np.asarray(run["split"]) == "test").sum())
+    if n > ml_stats.AUTO_ROWS and not st.button(
+            f"Measure how sure these scores are ({n:,} test rows, "
+            f"{ml_stats.RESAMPLES} resamples)", key="ml_r_stats"):
+        return None, None
+    with st.spinner("Resampling the test rows"):
+        kept[run["metric"]] = ml_stats.intervals(run)
+    return kept[run["metric"]]
+
+
+def _sure(run, pair):
+    """One line on whether the best model really beats the runner-up."""
+    if not pair:
+        return
+    best = ml.result(run, pair["best"])["label"]
+    other = ml.result(run, pair["other"])["label"]
+    line = (f"{best} beat {other} in {pair['wins']:.0%} of "
+            f"{pair['resamples']} resamples of the test rows (difference "
+            f"{pair['low']:+.3f} to {pair['high']:+.3f}, 95% interval)")
+    if pair["wins"] >= ml_stats.CLEAR_WIN:
+        st.caption(line + ": a clear win.")
+    else:
+        st.warning(line + ". That is within the noise: on new data either "
+                   "could come out ahead. Prefer the simpler or faster one, "
+                   "or test on more rows.")
+
+
 def _cards(run, best):
     """The run in four numbers, above everything else."""
     cards = st.columns(4)
@@ -160,7 +195,10 @@ def _cards(run, best):
     value = best["test"].get(metric)
     rows_ = "rows scored" if run.get("external") else "test rows"
     cards[1].metric(f"{name}, {rows_}",
-                    "—" if value is None else f"{value:.3f}", border=True)
+                    "—" if value is None else f"{value:.3f}", border=True,
+                    help=None if not _interval(run, best) else
+                    f"95% interval {_interval(run, best)}, from "
+                    f"{ml_stats.RESAMPLES} resamples of the test rows.")
     base = next((r for r in run["results"] if r["key"] == ml.BASELINE
                  and not r.get("error")), None)
     ref = base["test"].get(metric) if base else None
@@ -180,9 +218,24 @@ def _cards(run, best):
                         border=True)
 
 
+def _interval(run, res):
+    """"low to high" for a model's 95% interval, once measured."""
+    got = (run.get("_stats") or {}).get(run["metric"])
+    iv = (got[0] if got else {}).get(res["key"]) if got else None
+    if not iv or iv["low"] is None:
+        return None
+    return f"{iv['low']:.3f} to {iv['high']:.3f}"
+
+
 def _leaderboard_table(run):
     """Every model in one dense table: the best and the baseline marked."""
     table = ml_eval.leaderboard(run)
+    measured = (run.get("_stats") or {}).get(run["metric"])
+    if measured and "key" in table:
+        name = ml.metric_label(run["family"], run["metric"])
+        table.insert(table.columns.get_loc("Status") + 1,
+                     f"{name} 95% interval",
+                     [_interval(run, {"key": k}) for k in table["key"]])
     skip = ("Model", "key", "Status", "Settings")
     numbers = [c for c in table.columns if c not in skip]
     rows = []
@@ -194,6 +247,9 @@ def _leaderboard_table(run):
                shell.status("Failed", "bad") if mark else None}
         for c in numbers:
             v = rec.get(c)
+            if isinstance(v, str) or (c.endswith("95% interval")):
+                row[c] = v
+                continue
             row[c] = (None if v is None or pd.isna(v) else
                       f"{int(v)}" if c == "Clusters" else
                       f"{v:.2f}" if c == "Fit (s)" else f"{v:.3f}")
@@ -1270,6 +1326,60 @@ def _score_new(run, res):
 
 
 # ── the page ────────────────────────────────────────────────────────────
+@st.fragment
+@guard.guarded("Segments")
+def _segments(run, res, df):
+    """The model's score in each segment of one column, on the test rows."""
+    target = run.get("target")
+    cols = [c for c in df.columns if c != target
+            and 2 <= df[c].nunique(dropna=True)
+            and (df[c].nunique(dropna=True) <= 50 or
+                 pd.api.types.is_numeric_dtype(df[c]))]
+    if not cols:
+        st.caption("No column here splits the rows into segments.")
+        return
+    feats = list(run["config"].get("categorical") or []) + list(
+        run["config"].get("numeric") or [])
+    first = next((c for c in feats if c in cols), cols[0])
+    key = f"ml_r_segment_{res['key']}"
+    if key not in st.session_state or st.session_state[key] not in cols:
+        st.session_state[key] = first
+    col = st.selectbox("Segment by", cols, key=key,
+                       help="Any column of the file, used by the model or "
+                            "not: a region, a channel, an age band.")
+    table = ml_stats.segments(run, res, df, col)
+    name = ml.metric_label(run["family"], run["metric"])
+    overall = res["test"].get(run["metric"])
+    actual = ("Actual rate" if run["task"] == "classification"
+              and run.get("positive") else "Actual mean"
+              if run["task"] == "regression" else None)
+    rows = []
+    for r in table.to_dict("records"):
+        weak = r["gap"] is not None and r["gap"] < -0.02
+        rows.append({
+            "segment": r["segment"], "rows": f"{r['rows']:,}",
+            "actual": None if r["actual"] is None or actual is None else
+            (f"{r['actual']:.1%}" if run["task"] == "classification"
+             else f"{r['actual']:,.4g}"),
+            "value": None if r["value"] is None else f"{r['value']:.3f}",
+            "gap": None if r["gap"] is None else f"{r['gap']:+.3f}",
+            "flag": shell.status("Too few rows", "idle")
+            if r["value"] is None else
+            shell.status("Weaker", "warn") if weak else None})
+    columns = [("Segment", "segment"), ("Test rows", "rows", "num")]
+    if actual:
+        columns.append((actual, "actual", "num"))
+    columns += [(name, "value", "num"), ("Vs all test rows", "gap", "num"),
+                ("", "flag")]
+    shell.table(columns, rows)
+    st.caption(f"{name} on the test rows of each segment, worst first; "
+               f"{'—' if overall is None else f'{overall:.3f}'} on all of "
+               f"them. Segments with fewer than {ml_stats.MIN_SEGMENT} test "
+               f"rows are not scored. A segment can score lower because the "
+               f"model is weaker there, or because its rows are harder: "
+               f"check the actual rate beside it.")
+
+
 def _header(run):
     st.markdown("## Results")
     st.caption(_summary(run))
@@ -1290,11 +1400,13 @@ def render():
                    "again may help.")
         _leaderboard(run)
         return
+    stats = _stats(run)
     _cards(run, best)
     _verdict(run)
     with st.container(border=True, key="card_leaderboard"):
         st.markdown("#### Leaderboard")
         _leaderboard(run)
+        _sure(run, stats[1])
     keys = [r["key"] for r in models]
     pick_key = "ml_r_model"
     if pick_key not in ss or ss[pick_key] not in keys:
@@ -1320,7 +1432,8 @@ def render():
     else:
         binary = task == "classification" and len(run["classes"]) == 2
         names = ["Performance"] + (["Targeting"] if binary else []) + [
-            "What drives it", "SHAP", "Predictions", "Python code"] + (
+            "Segments", "What drives it", "SHAP", "Predictions",
+            "Python code"] + (
             ["Tuning"] if res.get("tuned") else [])
         tabs = dict(zip(names, st.tabs(names)))
         with tabs["Performance"]:
@@ -1333,6 +1446,8 @@ def render():
         if binary:
             with tabs["Targeting"]:
                 _targeting(run, res, df)
+        with tabs["Segments"]:
+            _segments(run, res, df)
         with tabs["What drives it"]:
             _drivers(run, res, df)
         with tabs["SHAP"]:
