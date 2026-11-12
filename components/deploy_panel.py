@@ -109,6 +109,41 @@ def stages(p, user):
                   "note": t["note"] or t["comment"]} for t in history])
 
 
+# ── the model API's answers, kept ───────────────────────────────────────
+def prediction_logs(p, user):
+    from logic import prediction_log
+    st.markdown("#### Recent predictions")
+    got = prediction_log.recent(user, p["id"], limit=50)
+    if not got:
+        st.caption("Every request the model API answers is kept here: who "
+                   "called, which version answered, the rows and what the "
+                   "model said.")
+        return
+    shell.table(
+        [("When", "when"), ("Model", "model"), ("Stage", "stage"),
+         ("Rows", "rows", "num"), ("Input warnings", "flagged"),
+         ("Time", "ms", "num"), ("Caller", "caller")],
+        [{"when": _t(r["at"]), "model": f"{r['model']} v{r['version']}",
+          "stage": shell.status(r["stage"]), "rows": f"{r['rows']:,}",
+          "flagged": shell.status(f"{r['flagged']:,} rows", "warn")
+          if r["flagged"] else None,
+          "ms": f"{r['latency_ms']:,} ms", "caller": r["caller"]}
+         for r in got])
+    labels = {r["id"]: f"{_t(r['at'])} · {r['model']} v{r['version']} · "
+                       f"{r['rows']:,} rows" for r in got}
+    c1, c2 = st.columns([4, 1.2], vertical_alignment="bottom")
+    pick = c1.selectbox("Download a request", list(labels),
+                        format_func=labels.get, key="dep_log_pick")
+    c2.download_button(
+        "Download", width="stretch", key="dep_log_dl",
+        data=lambda: prediction_log.rows(user, p["id"], pick).to_csv(
+            index=False).encode("utf-8"),
+        file_name=f"predictions_{pick[:8]}.csv", mime="text/csv")
+    st.caption("Each file holds the rows as sent and the model's answers, "
+               "warnings included: what an auditor asks for, and what "
+               "live accuracy needs once the outcomes are known.")
+
+
 # ── API keys ────────────────────────────────────────────────────────────
 def api_keys(p, user):
     if not projects.can(user, p["id"], "owner"):

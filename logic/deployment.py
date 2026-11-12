@@ -229,7 +229,13 @@ def revoke_key(user, project_id, key_id):
 
 
 def authenticate(key):
-    """The project id a live key belongs to, or None. Marks it used at
+    """The project id a live key belongs to, or None."""
+    got = caller(key)
+    return got["project_id"] if got else None
+
+
+def caller(key):
+    """{"project_id", "name"} for a live key, or None. Marks it used at
     most once a minute (a write per request would be wasteful)."""
     if not key or not key.startswith(KEY_PREFIX):
         return None
@@ -242,7 +248,7 @@ def authenticate(key):
         if last is None or (_now() - last).total_seconds() > 60:
             k.last_used_at = _now()
             s.commit()
-        return k.project_id
+        return {"project_id": k.project_id, "name": k.name}
 
 
 # ── batch jobs ──────────────────────────────────────────────────────────

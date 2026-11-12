@@ -26,7 +26,7 @@ from sklearn.metrics import (average_precision_score, precision_recall_curve,
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, TargetEncoder
 
-from logic import ml, ml_prep, ml_recipe, ml_upload
+from logic import inputs, ml, ml_prep, ml_recipe, ml_upload
 
 GAIN_GROUPS = 10
 MAX_CURVE_POINTS = 400
@@ -1503,6 +1503,27 @@ def config_script(df, config, steps=None) -> str:
         metric=metric, searches=searches, steps=steps)
 
 
+def _input_profile(run, res):
+    """The inputs as the model was trained on them (`logic.inputs`): the
+    training rows of the prepared file; for a model trained elsewhere, the
+    file it was evaluated on."""
+    frame = run.get("frame")
+    if frame is None:
+        return None
+    if run.get("external"):
+        kinds = {run["base"]["columns"][n]: k
+                 for n, k in run["base"]["kinds"].items()}
+        rows = frame
+    else:
+        recipe = res["recipe"]
+        kinds = {**{c: "numeric" for c in recipe["numeric"]},
+                 **{c: "categorical" for c in recipe["categorical"]}}
+        train = np.char.startswith(np.asarray(run["split"], dtype=str),
+                                   "train")
+        rows = frame.iloc[np.flatnonzero(train)] if train.any() else frame
+    return inputs.profile(rows, kinds)
+
+
 def model_bytes(run, res) -> bytes:
     if run.get("external"):
         if res["key"] != ml_upload.KEY:
@@ -1511,6 +1532,7 @@ def model_bytes(run, res) -> bytes:
         if bundle is None:
             raise ValueError("This evaluation no longer holds the uploaded "
                              "file; upload it again to register it.")
+        bundle["inputs"] = _input_profile(run, res)
         buf = io.BytesIO()
         joblib.dump(bundle, buf)
         return buf.getvalue()
@@ -1521,7 +1543,9 @@ def model_bytes(run, res) -> bytes:
               "prep_steps": list(run.get("prep_steps") or []),
               # The cut-off chosen on the results page, if any: every place
               # that scores with this file flags at it.
-              "threshold": res.get("threshold")}
+              "threshold": res.get("threshold"),
+              # Ranges and typical values: input checks and reasons.
+              "inputs": _input_profile(run, res)}
     buf = io.BytesIO()
     joblib.dump(bundle, buf)
     return buf.getvalue()

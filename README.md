@@ -168,6 +168,18 @@ From a project's page:
   for the production version (`?stage=staging` or `?version=N` to choose),
   up to 10,000 rows a call; reference docs at `/api/docs`. A key reaches its
   own project's models only. Locally: `uvicorn api.main:app --port 8000`.
+
+  Each row is checked against what the model was trained on:
+  `ML_Warnings` names a value outside the training range, a category never
+  seen, or a gap (null when nothing is off). `?explain=3` adds
+  `ML_Reasons`, the three inputs that moved the prediction most against
+  their typical training value (up to 1,000 rows a call). Every request is
+  kept: the project's Models section lists them under **Recent
+  predictions** (who called, which version, rows, warnings, time) with the
+  rows and answers to download, and the response carries its `request_id`.
+  Model files registered before these checks score as before, without
+  them; register again to get them. Batch jobs get the warnings too, and
+  keep their scored output as before.
 - **Batch scoring** — jobs score the project's dataset, an uploaded file or
   a Snowflake query with a model's production (or staging) version, and
   write a downloadable file or a Snowflake table — on demand or on a
