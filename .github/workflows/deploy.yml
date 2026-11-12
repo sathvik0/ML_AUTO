@@ -29,7 +29,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - run: pip install -r infra/requirements.txt
+      - run: pip install --require-hashes -r infra/requirements.lock
       - name: Deploy the web tier
         working-directory: infra
         run: |

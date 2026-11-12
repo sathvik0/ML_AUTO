@@ -17,7 +17,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt pytest pyflakes httpx
+      - run: pip install --require-hashes -r requirements-dev.lock
+      - name: Locks cover the requirements
+        run: python tools/check_locks.py
       - name: Lint
         run: python -m pyflakes app.py api worker components logic utils tools tests migrations
       - name: Tests
@@ -34,7 +36,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pip install -r infra/requirements.txt pytest
+      - run: |
+          pip install --require-hashes -r infra/requirements.lock
+          pip install pytest==9.2.0
       - name: Synthesise and check the stacks
         run: python -m pytest -q infra/tests
 

@@ -22,9 +22,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
-# Requirements first: this layer is cached until the dependency list changes.
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# The lock first: this layer is cached until the dependencies change. Exact
+# versions with hashes, so every build installs the same packages.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY . .
 
