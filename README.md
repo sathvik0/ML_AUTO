@@ -254,18 +254,37 @@ See [docs/architecture.md](docs/architecture.md) for the design and
 
 ```bash
 python -m pytest -q tests          # app
-python -m pytest -q infra/tests    # infrastructure (needs infra/requirements.txt)
+python -m pytest -q infra/tests    # infrastructure (needs infra/requirements.lock)
 ```
 
 ## Run
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m pip install --require-hashes -r requirements-dev.lock
 .venv\Scripts\python -m streamlit run app.py
 ```
 
 (On macOS / Linux use `.venv/bin/python`.)
+
+## Dependencies
+
+`requirements.txt` (and `requirements-dev.txt`, `infra/requirements.txt`)
+list what the app needs, as ranges. The `.lock` files beside them pin every
+package, its dependencies included, to one version with its hashes, for
+Linux, macOS and Windows alike. The Docker image, CI and the deploy
+workflow install only from the locks, so they all get the same packages,
+and CI fails when a lock no longer covers its requirements
+(`python tools/check_locks.py`).
+
+After changing a requirements file, or to take newer versions, regenerate
+the locks with [uv](https://docs.astral.sh/uv/) and run the tests:
+
+```bash
+uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes -o requirements.lock
+uv pip compile requirements.txt requirements-dev.txt --universal --python-version 3.12 --generate-hashes -o requirements-dev.lock
+cd infra && uv pip compile requirements.txt --universal --python-version 3.12 --generate-hashes -o requirements.lock
+```
 
 ## Layout
 
