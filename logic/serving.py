@@ -81,7 +81,7 @@ def score(info, rows: pd.DataFrame, explain=0) -> pd.DataFrame:
             if c in set(columns.values())}
     if prof:
         found = inputs.warnings(rows, prof)
-        out["ML_Warnings"] = [w or None for w in found]
+        out["ML_Warnings"] = _text_column(found, out.index)
     if explain and info["task"] != "clustering":
         if not prof:
             raise ScoringError("This model file was registered before "
@@ -90,9 +90,16 @@ def score(info, rows: pd.DataFrame, explain=0) -> pd.DataFrame:
         if len(rows) > MAX_EXPLAIN_ROWS:
             raise ScoringError(f"Reasons are given for up to "
                                f"{MAX_EXPLAIN_ROWS:,} rows per request.")
-        out["ML_Reasons"] = _reasons(info, rows, columns, prof,
-                                     min(int(explain), MAX_REASONS))
+        out["ML_Reasons"] = _text_column(
+            _reasons(info, rows, columns, prof,
+                     min(int(explain), MAX_REASONS)), out.index)
     return out
+
+
+def _text_column(values, index):
+    """Text per row, None where there is none. As objects: pandas 3 would
+    otherwise read the list as strings and turn None into NaN."""
+    return pd.Series([v or None for v in values], index=index, dtype=object)
 
 
 def _target_score(info, frame, pred=None):
