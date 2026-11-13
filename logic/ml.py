@@ -1367,12 +1367,17 @@ def _failed(key, task, ref):
     return {"key": key, "label": model_label(task, key), "error": ref}
 
 
-def train(df, config, progress=None) -> dict:
+def train(df, config, progress=None, source=None, steps=None) -> dict:
     """Train every model in `config` on `df`; returns the run.
 
     One model failing does not end the run: it is reported with a reference
     and logged, and the others train as normal. `progress(fraction, text)`
     is called as fits finish.
+
+    With `source` (the file as loaded) and `steps` (the preparation that
+    turned it into `df`), the steps' learnt values (fills, caps, bands) are
+    worked out again from the training rows once the split is known, and
+    the run keeps those steps (`prep_steps`) and that file (`frame`).
     """
     t0 = time.perf_counter()
     task = config["task"]
@@ -1380,7 +1385,7 @@ def train(df, config, progress=None) -> dict:
     if task == "clustering":
         run = _train_clustering(df, config, ticker)
     else:
-        run = _train_supervised(df, config, ticker)
+        run = _train_supervised(df, config, ticker, source, steps)
     run["seconds"] = time.perf_counter() - t0
     run["sklearn"] = sklearn.__version__
     run["created"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
@@ -1395,7 +1400,20 @@ def train(df, config, progress=None) -> dict:
     return run
 
 
-def _train_supervised(df, config, ticker):
+def _refit_frame(df, config, source, steps, train_rows):
+    """(steps, file) with the steps' learnt values from the training rows,
+    or (None, None) when no step learns or the rows would not line up."""
+    if source is None or not any(s.get("learn") for s in steps or []):
+        return None, None
+    features = set(config["numeric"]) | set(config["categorical"])
+    learnt = ml_prep.refit(source, steps, df.index[train_rows], features)
+    again = ml_prep.apply_steps(source, learnt)
+    if not again.index.equals(df.index):
+        return None, None
+    return learnt, again
+
+
+def _train_supervised(df, config, ticker, source=None, steps=None):
     task = config["task"]
     target = config["target"]
     rule = (resolve_rule(df, target, config["target_rule"])
@@ -1423,6 +1441,13 @@ def _train_supervised(df, config, ticker):
                 if not _numeric_like(df[col]) else None
         times = ml_recipe.time_values(df, base)[labelled]
     tr, te = ml_recipe.split(y, groups, base, times)
+    learnt, again = _refit_frame(df, config, source, steps, lab_rows[tr])
+    if again is not None:
+        # The features as the training rows alone would prepare them; the
+        # target, the split and the rows are unchanged.
+        df = again
+        X = ml_recipe.prepare_features(df, base["numeric"],
+                                       base["categorical"])
     classes = [str(c) for c in _classes(y)] if task == "classification" \
         else []
     positive = None
@@ -1500,6 +1525,8 @@ def _train_supervised(df, config, ticker):
             "n_train": len(tr), "n_test": len(te),
             "n_unlabelled": len(unl_rows), "folds": len(splits),
             "time_split": time_split,
+            **({"prep_steps": learnt, "frame": df,
+                "prep_learnt": True} if learnt is not None else {}),
             "results": results,
             "best": _best_supervised(results, family, metric, bool(splits))}
 

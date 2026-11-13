@@ -251,13 +251,16 @@ def run_job(job_id, worker=None):
 
 def _train(user, project_id, payload, progress):
     from logic import ml, ml_eval, ml_prep
-    df, _ = projects.load_dataset(user, project_id, payload["dataset_id"])
+    source, _ = projects.load_dataset(user, project_id,
+                                      payload["dataset_id"])
     steps = payload.get("steps") or []
     progress(0.01, "Preparing the data")
-    if steps:
-        df = ml_prep.apply_steps(df, steps)
-    run = ml.train(df, payload["config"], progress)
-    run["prep_steps"], run["importance"] = list(steps), {}
+    df = ml_prep.apply_steps(source, steps) if steps else source
+    run = ml.train(df, payload["config"], progress, source=source,
+                   steps=steps)
+    run.setdefault("prep_steps", list(steps))
+    run["importance"] = {}
+    df = run.get("frame") if run.get("frame") is not None else df
     if run["task"] != "clustering" and run.get("best"):
         res = ml.result(run, run["best"])
         if ml_eval.importance_seconds(run, res) <= 60:

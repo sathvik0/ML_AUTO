@@ -576,8 +576,12 @@ def _builder(df, prof):
                 high = high if high is not None and high < hi else None
             if low is None and high is None:
                 return None, f"Nothing to cap: {col} has no values beyond."
+            learn = ({"cap": "pct",
+                      "low": p_lo / 100 if p_lo > 0 else None,
+                      "high": p_hi / 100 if p_hi < 100 else None}
+                     if mode == "pct" else {"cap": "iqr", "k": float(k)})
             return {"kind": kind, "column": col, "low": low,
-                    "high": high}, None
+                    "high": high, "learn": learn}, None
         if kind == "transform":
             h_key = f"{PREFIX}how"
             _seed(h_key, "log1p", list(ml_prep.TRANSFORMS))
@@ -608,7 +612,8 @@ def _builder(df, prof):
             if len(edges) < 3:
                 return None, f"{col} has too few distinct values to cut."
             return {"kind": kind, "column": col, "edges": edges,
-                    "into": _new_name(df, f"{col}_band")}, None
+                    "into": _new_name(df, f"{col}_band"),
+                    "learn": {"bins": int(bands), "how": how}}, None
         return {"kind": "as_category", "column": col}, None
     if kind == "keep_values":
         col = pick("Column", categorical, "cat_col")
@@ -650,7 +655,10 @@ def _builder(df, prof):
                 return None, f"{col} holds no numbers to take a {how} of."
             else:
                 value = float(v.median() if how == "median" else v.mean())
-            return {"kind": kind, "column": col, "value": value}, None
+            step = {"kind": kind, "column": col, "value": value}
+            if how in ("median", "mean"):
+                step["learn"] = {"fill": how}
+            return step, None
         h_key = f"{PREFIX}fill_how_text"
         _seed(h_key, "mode", ["mode", "value"])
         how = st.radio("Fill with", ["mode", "value"], horizontal=True,
@@ -665,7 +673,10 @@ def _builder(df, prof):
             value = st.text_input("Value", key=f"{PREFIX}fill_text").strip()
             if not value:
                 return None, "Type the value to fill with."
-        return {"kind": kind, "column": col, "value": value}, None
+        step = {"kind": kind, "column": col, "value": value}
+        if how == "mode":
+            step["learn"] = {"fill": "mode"}
+        return step, None
     if kind == "date_parts":
         col = pick("Date column", _dates_left(df, prof), "date_col")
         if col is None:
@@ -740,9 +751,9 @@ def _prepare(df, prof):
                       steps=len(steps) + 1, rows_before=len(df),
                       rows_after=rows, columns_after=cols)
             st.rerun()
-    st.caption("Fills and caps here use every row, so a test row helps "
-               "choose them; the configure page's fills and caps learn from "
-               "the training rows only. Rows dropped here are not scored. A "
+    st.caption("Fills, caps and bands are shown with values from every "
+               "row; when a model trains they are worked out again from its "
+               "training rows only, so no test row helps choose them. Rows dropped here are not scored. A "
                "file scored later gets the column steps; its rows are all "
                "kept.")
     if steps:

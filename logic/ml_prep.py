@@ -320,6 +320,55 @@ def domain_problem(values, how):
     return None
 
 
+def relearn(step, rows):
+    """`step` with its learnt values worked out again from `rows` (a step
+    that records no "learn" keeps its values). Values that cannot be
+    worked out on these rows (a column with no numbers) are kept."""
+    how = step.get("learn")
+    if not how or step["column"] not in rows.columns:
+        return step
+    v = _numbers(rows[step["column"]]).dropna()
+    out = dict(step)
+    if step["kind"] == "cap" and len(v):
+        if how["cap"] == "pct":
+            out["low"] = quantile(v, how["low"]) \
+                if how.get("low") is not None else None
+            out["high"] = quantile(v, how["high"]) \
+                if how.get("high") is not None else None
+        else:
+            out["low"], out["high"] = iqr_fences(v, how["k"])
+    elif step["kind"] == "bin" and len(v):
+        edges = bin_edges(v, how["bins"], how["how"])
+        if len(edges) >= 3:
+            out["edges"] = edges
+    elif step["kind"] == "fill":
+        if how["fill"] in ("median", "mean") and len(v):
+            out["value"] = float(v.median() if how["fill"] == "median"
+                                 else v.mean())
+        elif how["fill"] == "mode":
+            counts = rows[step["column"]].dropna().astype(str).value_counts()
+            if len(counts):
+                out["value"] = str(counts.index[0])
+    return out
+
+
+def refit(source, steps, train_labels, columns):
+    """The steps with their learnt values worked out from the training rows
+    only (`train_labels`, index labels of `source`), each on the file as the
+    steps before it leave it. Only steps on `columns` (the features) are
+    worked out again; one on the target, the time or a group column keeps
+    its values, so the rows and the split stay as they were."""
+    keep = set(train_labels)
+    out, cur = [], source
+    for n, step in enumerate(steps or [], 1):
+        if step.get("learn") and (step.get("column") in columns
+                                  or step.get("into") in columns):
+            step = relearn(step, cur[cur.index.isin(keep)])
+        out.append(step)
+        cur = apply_step(cur, step, n)
+    return out
+
+
 def effect(df, step):
     """(rows, columns) after the step, without keeping the result."""
     out = apply_step(df, step)

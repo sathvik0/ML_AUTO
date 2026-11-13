@@ -18,7 +18,7 @@ import os
 import pandas as pd
 import streamlit as st
 
-from logic import ml, ml_eval, ml_recipe
+from logic import asof, ml, ml_eval, ml_recipe
 from utils import auth, guard, log, scroll
 
 _log = log.get("ml_config")
@@ -761,6 +761,10 @@ def _summary_card(df, config, errors):
         st.warning(e)
     if not errors:
         _plan_line(config, len(df))
+        # Known when the prediction is made? Cautions only: the person who
+        # knows the data decides.
+        for c in asof.cautions(df, config):
+            st.warning(c, icon=":material/schedule:")
     from components import jobs_panel
     blocked = bool(errors) or not auth.can("train")
     background = False
@@ -830,10 +834,15 @@ def _train(df, config):
     def progress(fraction, text):
         bar.progress(min(max(float(fraction), 0.0), 1.0), text=text)
 
-    run = ml.train(df, config, progress)
-    # The scripts, the model file and a file scored later replay these.
-    run["prep_steps"] = list(ss.get("ml_steps") or [])
+    steps = list(ss.get("ml_steps") or [])
+    run = ml.train(df, config, progress, source=ss.get("ml_source"),
+                   steps=steps)
+    # The scripts, the model file and a file scored later replay these:
+    # with learnt values from the training rows when training set them.
+    run.setdefault("prep_steps", steps)
     run["importance"] = {}
+    if run.get("frame") is not None:
+        df = run["frame"]
     if run["task"] != "clustering" and run["best"]:
         res = ml.result(run, run["best"])
         if ml_eval.importance_seconds(run, res) <= AUTO_IMPORTANCE_S:
