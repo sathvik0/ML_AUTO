@@ -279,9 +279,22 @@ def _target_summary(df, task, target, rule, positive):
                    f"model.")
 
 
+def _past_columns():
+    """Columns made by a "lags" step: past values, which predict the
+    target strongly by design and never contain the row's own value."""
+    out = set()
+    for s in st.session_state.get("ml_steps") or []:
+        if s["kind"] == "lags":
+            out |= {f"{s['column']}_lag_{k}" for k in s.get("lags") or []}
+            out |= {f"{s['column']}_mean_{w}"
+                    for w in s.get("windows") or []}
+    return out
+
+
 def _default_features(prof, task, target, leaks):
     ok = prof[prof["use"] & (prof["column"] != target)]
-    cols = [c for c in ok["column"] if c not in leaks]
+    past = _past_columns()
+    cols = [c for c in ok["column"] if c not in leaks or c in past]
     if task == "clustering":
         # Segments by behaviour: geography and categories would otherwise
         # decide the clusters (a region code separated the sample's best).
@@ -763,7 +776,8 @@ def _summary_card(df, config, errors):
         _plan_line(config, len(df))
         # Known when the prediction is made? Cautions only: the person who
         # knows the data decides.
-        for c in asof.cautions(df, config):
+        for c in asof.cautions(df, config,
+                               st.session_state.get("ml_steps")):
             st.warning(c, icon=":material/schedule:")
     from components import jobs_panel
     blocked = bool(errors) or not auth.can("train")

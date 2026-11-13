@@ -418,7 +418,8 @@ METRICS = {
     "regression": [("r2", "R²", True), ("rmse", "RMSE", False),
                    ("mae", "Mean absolute error", False),
                    ("medae", "Median absolute error", False),
-                   ("mape", "Mean absolute % error", False)],
+                   ("mape", "Mean absolute % error", False),
+                   ("wape", "Weighted absolute % error (WAPE)", False)],
     "clustering": [("silhouette", "Silhouette", True),
                    ("calinski_harabasz", "Calinski-Harabasz", True),
                    ("davies_bouldin", "Davies-Bouldin", False)],
@@ -429,7 +430,7 @@ SELECTABLE = {"binary": ("roc_auc", "average_precision", "f1",
                          "balanced_accuracy", "accuracy", "log_loss"),
               "multiclass": ("f1_macro", "balanced_accuracy", "accuracy",
                              "roc_auc_ovr", "log_loss"),
-              "regression": ("r2", "rmse", "mae", "mape")}
+              "regression": ("r2", "rmse", "mae", "mape", "wape")}
 
 
 def metric_family(task, n_classes=None):
@@ -553,6 +554,10 @@ def regression_metrics(y_true, y_pred):
         # a number, and a stand-in epsilon turns one such row into billions.
         "mape": (float((np.abs(err[nonzero]) / np.abs(y_true[nonzero])).mean()
                        * 100) if nonzero.any() else None),
+        # All the errors over all the actuals: days with zero sales do not
+        # blow it up the way they do a mean of percentages.
+        "wape": (float(np.abs(err).sum() / np.abs(y_true).sum() * 100)
+                 if np.abs(y_true).sum() > 0 else None),
     }
 
 

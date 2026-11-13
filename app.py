@@ -164,11 +164,12 @@ if ss.get("page") in ML_PAGES and "ml_df" in ss:
 # ── Home, and the data page: upload a file or try the sample ────────────
 SAMPLE_PATH = os.path.join(os.path.dirname(__file__), "sample_data",
                            "insurance_churn.csv")
+SALES_PATH = os.path.join(os.path.dirname(__file__), "sample_data",
+                          "store_sales.csv")
 
 
-def _load_sample():
-    _start_ml(file_loader.read_path(SAMPLE_PATH), "sample",
-              os.path.basename(SAMPLE_PATH))
+def _load_sample(path=SAMPLE_PATH):
+    _start_ml(file_loader.read_path(path), "sample", os.path.basename(path))
     st.rerun()
 
 
@@ -205,18 +206,23 @@ def _data():
                                     type=["csv", "xlsx", "xls"],
                                     key="main_upload")
         has_sample = os.path.exists(SAMPLE_PATH)
-        b_go, b_sample = st.columns(2)
+        b_go, b_sample, b_sales = st.columns(3)
         go = b_go.button("Start", type="primary", disabled=uploaded is None,
                          width="stretch")
         use_sample = has_sample and b_sample.button(
             "Try sample data", width="stretch",
             help="Open the bundled sample dataset.")
+        use_sales = os.path.exists(SALES_PATH) and b_sales.button(
+            "Try a sales forecast", width="stretch", key="sample_sales",
+            help="Two years of daily sales for eight stores.")
         if uploaded is None:
-            st.caption("Add a file above, then start — or try the sample: "
+            st.caption("Add a file above, then start. Or try a sample: "
                        "10,000 insurance customers with who churned at "
                        "renewal (classification), their annual premium and "
                        "lifetime value (regression), and behaviour that "
-                       "falls into customer segments (clustering).")
+                       "falls into customer segments (clustering); or two "
+                       "years of daily sales for eight stores, to forecast "
+                       "with past values and a time split.")
         with st.expander("Or load the data from Snowflake"):
             st.caption("Read a table or view, or write a query that selects "
                        "only the rows needed from a very large one. A table "
@@ -227,10 +233,10 @@ def _data():
     # Its own guard inside this page's: a dataset that fails to load is
     # reported under the controls, rather than replacing the page.
     guard.action("Loading the dataset", "That dataset could not be loaded.",
-                 _launch, go, uploaded, use_sample, sf_df)
+                 _launch, go, uploaded, use_sample, sf_df, use_sales)
 
 
-def _launch(go, uploaded, use_sample, sf_df=None):
+def _launch(go, uploaded, use_sample, sf_df=None, use_sales=False):
     if go and uploaded is not None:
         df = load_file(uploaded)
         if df is not None:
@@ -238,6 +244,8 @@ def _launch(go, uploaded, use_sample, sf_df=None):
             st.rerun()
     elif use_sample:
         _load_sample()
+    elif use_sales:
+        _load_sample(SALES_PATH)
     elif sf_df is not None:
         # The picker only returns a frame on the run its Load button was
         # pressed, so this cannot re-fire on a later interaction.
