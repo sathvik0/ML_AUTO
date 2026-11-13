@@ -111,12 +111,14 @@ def _target_choice(ref, cur):
 def _summary(r):
     cv = r["covariate"]
     c = st.columns(4)
-    c[0].metric("Columns compared", f"{len(r['columns']):,}")
-    c[1].metric("Major drift", int((cv["severity"] == "Major").sum()))
-    c[2].metric("Moderate drift", int((cv["severity"] == "Moderate").sum()))
+    c[0].metric("Columns compared", f"{len(r['columns']):,}", border=True)
+    c[1].metric("Major drift", int((cv["severity"] == "Major").sum()),
+                border=True)
+    c[2].metric("Moderate drift", int((cv["severity"] == "Moderate").sum()),
+                border=True)
     clf = r["classifier"]
     c[3].metric("Drift classifier AUC",
-                f"{clf['auc']:.2f}" if clf else "—")
+                f"{clf['auc']:.2f}" if clf else "—", border=True)
     if clf:
         st.caption(f"Drift classifier: {ml_drift.classifier_reading(clf['auc'])}"
                    f" (0.50 means the files cannot be told apart).")
@@ -312,15 +314,18 @@ def render():
                f"(covariate drift) and which relationships have moved "
                f"(correlational drift). Run it before trusting a model on "
                f"new data, and regularly once it is in use.")
-    cur, label = _source()
-    if cur is None:
-        return
-    cur, note = _prepared(cur)
-    if note:
-        st.caption(note)
-    target = _target_choice(ref, cur)
+    with st.container(border=True, key="card_drift_source"):
+        st.markdown("#### What to compare")
+        cur, label = _source()
+        if cur is None:
+            return
+        cur, note = _prepared(cur)
+        if note:
+            st.caption(note)
+        target = _target_choice(ref, cur)
+        go = st.button("Analyse drift", type="primary", key=f"{PREFIX}go")
     sig = (ss.get("ml_version", 0), label, len(cur), target)
-    if st.button("Analyse drift", type="primary", key=f"{PREFIX}go"):
+    if go:
         with st.spinner("Comparing every column"), log.timer() as t:
             ss[f"{PREFIX}result"] = {"sig": sig, "r": ml_drift.analyse(
                 ref, cur, target, ss.get("ml_profile"))}
@@ -336,21 +341,27 @@ def render():
                    "analyse again to update it.")
         return
     r = got["r"]
-    st.divider()
     st.markdown(f"#### Against {label}")
     _summary(r)
     names = ["Covariate drift", "Distributions", "Correlation drift",
              "Target relationships", "Drift classifier"]
     tabs = dict(zip(names, st.tabs(names)))
-    with tabs["Covariate drift"]:
+
+    def panel(name):
+        # Each tab's content on one white panel.
+        return st.container(border=True, key="card_drift_" + name.lower()
+                            .replace(" ", "_"))
+
+    with tabs["Covariate drift"], panel("Covariate drift"):
         _covariate(r)
-    with tabs["Distributions"]:
+    with tabs["Distributions"], panel("Distributions"):
         _distributions(r, ref, cur)
-    with tabs["Correlation drift"]:
+    with tabs["Correlation drift"], panel("Correlation drift"):
         _correlation(r)
-    with tabs["Target relationships"]:
+    with tabs["Target relationships"], panel("Target relationships"):
         _target(r)
-    with tabs["Drift classifier"]:
+    with tabs["Drift classifier"], panel("Drift classifier"):
         _classifier(r)
-    st.divider()
-    _downloads(r)
+    with st.container(border=True, key="card_drift_downloads"):
+        st.markdown("#### Downloads")
+        _downloads(r)
