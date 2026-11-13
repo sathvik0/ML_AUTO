@@ -77,7 +77,7 @@ _NUMPY = {("numpy", "ndarray"), ("numpy", "dtype"),
           ("numpy.random.bit_generator", "__pyx_unpickle_SeedSequence"),
           # The app's own cap step (ml_recipe.with_caps): a pure function
           # of arrays, held by a FunctionTransformer.
-          ("numpy", "clip"),
+          ("numpy", "clip"), ("numpy", "array"),
           ("joblib.numpy_pickle", "NumpyArrayWrapper")}
 # Inside the estimator packages, beyond the estimator classes themselves:
 # modules whose classes are model parts (a tree's arrays, a loss, a link, a
@@ -89,7 +89,8 @@ _PART_MODULES = ("sklearn._loss.", "sklearn.tree._tree",
                  "sklearn.metrics._dist_metrics",
                  "sklearn.neural_network._stochastic_optimizers",
                  "sklearn.model_selection._split", "sklearn.calibration",
-                 "sklearn.metrics._scorer", "sklearn.utils._bunch")
+                 "sklearn.metrics._scorer", "sklearn.utils._bunch",
+                 "sklearn.impute._iterative")
 _FUNCTION_MODULES = ("sklearn.metrics._classification",
                      "sklearn.metrics._regression", "sklearn.metrics._ranking",
                      "sklearn.feature_selection._univariate_selection",

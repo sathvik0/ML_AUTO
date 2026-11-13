@@ -47,7 +47,10 @@ TASK_HELP = {
 # None first and by default: nothing is filled in unless asked for.
 NUM_MISSING = {"none": "None (left missing)", "median": "Median",
                "mean": "Mean", "zero": "Zero",
-               "most_frequent": "Most frequent"}
+               "most_frequent": "Most frequent",
+               "iterative": "Predicted from the other numbers (iterative)"}
+SELECT = {0: "Off", 10: "The strongest 10", 20: "The strongest 20",
+          30: "The strongest 30", 50: "The strongest 50"}
 CAT_MISSING = {"category": "None (missing is its own category)",
                "most_frequent": "Most frequent"}
 SCALING = {"standard": "Standard (z-score)",
@@ -423,6 +426,19 @@ def _prep(task, df, target):
     if task == "clustering":
         prep["pca"] = _choice("Reduce to principal components first", PCA,
                               f"{PREFIX}pca", 0)
+    else:
+        s1, s2 = st.columns([1, 3])
+        prep["select"] = _choice("Keep only the strongest prepared columns",
+                                 SELECT, f"{PREFIX}select", 0, s1)
+        s2.caption("A quick extra-trees model ranks the prepared columns "
+                   "(one per category when one-hot encoded) on the training "
+                   "rows of each fit, and the model reads only the strongest. "
+                   "Helps with many weak or noisy columns. Gradient boosting "
+                   "then reads encoded categories rather than its own.")
+    if prep["num_missing"] == "iterative":
+        st.caption("The iterative fill predicts each gap from the row's "
+                   "other numbers, in ten rounds, learnt from the training "
+                   "rows of each fit. Slower than a median on wide files.")
     return prep
 
 

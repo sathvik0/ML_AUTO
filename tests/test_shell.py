@@ -263,7 +263,8 @@ def test_explore_page_cards_and_column_plan():
     at = _loaded(_explore_page)
     assert not at.exception
     assert [m.label for m in at.metric][:2] == ["Rows", "Columns"]
-    plan = next(m.value for m in at.markdown if "ent-table" in m.value)
+    plan = next(m.value for m in at.markdown if "ent-table" in m.value
+                and "Customer_ID" in m.value)
     assert "chip-good'>Used" in plan
     assert "chip-idle'>Identifier" in plan            # Customer_ID is off
     assert any(b.key == "ml_e_continue" for b in at.button)

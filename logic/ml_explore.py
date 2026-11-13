@@ -59,6 +59,56 @@ def overview(df, prof) -> dict:
             "memory_mb": float(df.memory_usage(deep=True).sum() / 1e6)}
 
 
+# Columns that carry nothing a model can use, whatever the task.
+WASTED = ("constant", "derived", "duplicate", "high_card")
+# Per check: its points (adding up to 100), and the share of failures at
+# which every point is lost; fewer lose points in proportion.
+QUALITY = (("filled", 35, 0.25), ("unique", 20, 0.10),
+           ("columns", 25, 0.50), ("extremes", 20, 0.10))
+EXTREME_K = 3.0          # quartile fences this far out mark a value extreme
+
+
+def quality(df, prof, o=None) -> dict:
+    """A 0-100 score for the file as it stands, and the four checks behind
+    it: filled cells, unique rows, columns a model can use, and values
+    outside wide quartile fences. Each check loses its points in proportion
+    to its failures, all of them at the share QUALITY sets.
+
+    {"score", "grade", "checks": [{"check", "share", "points", "max",
+    "finding"}]}"""
+    o = o or overview(df, prof)
+    rows = max(o["rows"], 1)
+    wasted = list(prof.loc[prof["kind"].isin(WASTED), "column"])
+    values = extreme = 0
+    for c in measured_numeric(prof):
+        v = _numbers(df[c]).dropna()
+        if len(v) < 4:
+            continue
+        q1, q3 = np.quantile(v, [0.25, 0.75])
+        spread = EXTREME_K * (q3 - q1)
+        values += len(v)
+        extreme += int(((v < q1 - spread) | (v > q3 + spread)).sum())
+    ext_share = extreme / values if values else 0.0
+    share = {"filled": o["gap_share"], "unique": o["duplicate_rows"] / rows,
+             "columns": len(wasted) / max(o["columns"], 1),
+             "extremes": ext_share}
+    findings = {
+        "filled": f"{o['gap_share']:.1%} of cells are gaps",
+        "unique": f"{o['duplicate_rows']:,} duplicate rows",
+        "columns": (f"{len(wasted)} of {o['columns']} carry nothing: "
+                    + ", ".join(wasted[:5]) + ("…" if len(wasted) > 5 else "")
+                    if wasted else "Every column can carry information"),
+        "extremes": (f"{ext_share:.2%} of numeric values lie beyond "
+                     f"{EXTREME_K:g} × IQR from the quartiles")}
+    checks = [{"check": name, "share": share[name], "max": weight,
+               "points": weight * (1 - min(1.0, share[name] / full)),
+               "finding": findings[name]}
+              for name, weight, full in QUALITY]
+    score = int(round(sum(c["points"] for c in checks)))
+    grade = "good" if score >= 90 else "fair" if score >= 70 else "poor"
+    return {"score": score, "grade": grade, "checks": checks}
+
+
 def column_summary(df, prof) -> pd.DataFrame:
     """One row per column: gaps, and the spread of a number or the commonest
     value of a category."""
