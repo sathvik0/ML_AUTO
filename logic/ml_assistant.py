@@ -20,7 +20,9 @@ How to work:
 - Choose the target column from the candidates listed for that task. If the objective is ambiguous (several plausible targets, or unclear whether they want to predict or segment), ask one short clarifying question and make no proposal yet.
 - Recommend 2 to 4 models from the catalogue that suit the data size, column types and objective, always including a fast interpretable one and a strong one (gradient boosting, XGBoost or LightGBM when available). Set a model's settings only where you have a reason; otherwise leave them at the defaults.
 - Choose the metric to pick the best model by, matched to the objective: e.g. PR AUC or recall when the positive class is rare and missing it is costly, ROC AUC for ranking who to target, log loss when calibrated probabilities matter, MAE when errors cost in proportion, RMSE when large errors are especially bad.
-- Recommend validation (cross-validation folds, test share), class balancing for imbalanced targets, and preparation: missing-value fills, scaling, categorical encoding (one-hot by default; target encoding for columns with many categories; ordinal only for trees), and hyperparameter search ("random" when there is time to tune).
+- Recommend validation (cross-validation folds, test share), class balancing for imbalanced targets, and preparation: missing-value fills, scaling, categorical encoding (one-hot by default; target encoding for columns with many categories; ordinal only for trees), and hyperparameter search ("random" when there is time to tune, "bayes" when each fit is slow).
+- Split by time (split "time" with a time_column) whenever the model will score rows from later dates than it learns from, or the file has a date the outcome belongs to: a random split then flatters the test. Past-value columns (named like Sales_lag_7 or Sales_mean_7) always need it.
+- Use the other settings only with a reason: cap extreme numbers ("pct" or "iqr") for linear models, neighbours and neural networks on skewed numbers; rare_share to group rare categories in wide one-hot columns; missing_flags "yes" when a gap itself may carry meaning; num_missing "iterative" when numbers with gaps relate to other numbers; feature_select (keep the strongest N prepared columns) for many weak or noisy columns; log_target "yes" for a skewed, non-negative regression target such as revenue; resample ("smote" or "under") for a rare class when weights alone are not enough; calibration ("sigmoid" for small files, "isotonic" for large) when probabilities are read as risks; stack (2 to 5) to combine the best models when accuracy matters more than simplicity (needs cross-validation).
 - Warn about columns that could leak the answer (recorded after the outcome or derived from the target) if you see any.
 - Use only the keys and values listed in the context. Leave a proposal field as an empty string to keep what is on the page.
 - Keep the reply short: a few sentences or bullets, plain language, no tables. Explain the why behind the metric and the models."""
@@ -44,6 +46,10 @@ _SCHEMA = {
                 "test_share_percent": _FIELD, "balance_classes": _FIELD,
                 "num_missing": _FIELD, "cat_missing": _FIELD,
                 "scale": _FIELD, "cat_encoding": _FIELD, "tune_mode": _FIELD,
+                "split": _FIELD, "time_column": _FIELD, "cap": _FIELD,
+                "rare_share": _FIELD, "missing_flags": _FIELD,
+                "feature_select": _FIELD, "log_target": _FIELD,
+                "resample": _FIELD, "calibration": _FIELD, "stack": _FIELD,
                 "models": {
                     "type": "array",
                     "items": {
@@ -69,7 +75,10 @@ _SCHEMA = {
             "required": ["task", "target", "positive_class", "metric",
                          "folds", "test_share_percent", "balance_classes",
                          "num_missing", "cat_missing", "scale",
-                         "cat_encoding", "tune_mode", "models"],
+                         "cat_encoding", "tune_mode", "split",
+                         "time_column", "cap", "rare_share", "missing_flags",
+                         "feature_select", "log_target", "resample",
+                         "calibration", "stack", "models"],
             "additionalProperties": False,
         },
     },
@@ -140,8 +149,13 @@ def system_prompt(df, prof, options) -> str:
                  f"classification)\n{metrics}")
     opts = "\n".join(f"- {field}: {', '.join(map(str, keys))}"
                      for field, keys in options.items())
+    times = [c for c, t, k in zip(prof["column"], prof["type"],
+                                  prof["kind"]) if k == "date" or (
+        t == "numeric" and k not in ("id", "constant"))]
     parts.append(f"\n\n# Other settings and their allowed values\n{opts}\n"
-                 "- balance_classes: yes, no")
+                 "- balance_classes, missing_flags, log_target: yes, no\n"
+                 "- time_column (with split time): "
+                 + (", ".join(times[:MAX_COLUMNS]) or "none in this file"))
     return "".join(parts)
 
 

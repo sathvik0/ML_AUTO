@@ -33,7 +33,49 @@ def _options():
             "cat_encoding": list(ml_config.ENCODING),
             "tune_mode": list(ml_config.TUNING),
             "folds": list(ml_config.FOLDS),
-            "test_share_percent": ["10 to 40, in steps of 5"]}
+            "test_share_percent": ["10 to 40, in steps of 5"],
+            "split": list(ml_config.SPLITS),
+            "cap": list(ml_config.CAPS),
+            "rare_share": list(ml_config.RARE),
+            "feature_select (not clustering)": list(ml_config.SELECT),
+            "resample (classification)": list(ml_config.RESAMPLE),
+            "calibration (classification)": list(ml_config.CALIBRATE),
+            "stack (not clustering)": list(ml_config.STACK)}
+
+
+# Fields set from a fixed list of options: proposal field -> (widget,
+# options, the tasks it applies to).
+CHOICES = {
+    "num_missing": ("num_missing", ml_config.NUM_MISSING, ml.TASKS),
+    "cat_missing": ("cat_missing", ml_config.CAT_MISSING, ml.TASKS),
+    "scale": ("scale", ml_config.SCALING, ml.TASKS),
+    "cat_encoding": ("cat_encoding", ml_config.ENCODING, ml.TASKS),
+    "tune_mode": ("tune_mode", ml_config.TUNING, ml.TASKS),
+    "split": ("split", ml_config.SPLITS, ("classification", "regression")),
+    "cap": ("cap", ml_config.CAPS, ml.TASKS),
+    "rare_share": ("rare_share", ml_config.RARE, ml.TASKS),
+    "feature_select": ("select", ml_config.SELECT,
+                       ("classification", "regression")),
+    "resample": ("resample", ml_config.RESAMPLE, ("classification",)),
+    "calibration": ("calibration", ml_config.CALIBRATE, ("classification",)),
+    "stack": ("stack", ml_config.STACK, ("classification", "regression")),
+}
+YES_NO = {"missing_flags": ("missing_flags", ml.TASKS),
+          "log_target": ("log_target", ("regression",))}
+
+
+def _option(value, options):
+    """The option key `value` names (a key, or a number equal to one)."""
+    text = str(value).strip().lower()
+    for k in options:
+        if text == str(k).lower():
+            return k
+        try:
+            if not isinstance(k, str) and float(text) == float(k):
+                return k
+        except ValueError:
+            pass
+    return _NO
 
 
 def _current():
@@ -46,7 +88,10 @@ def _current():
     models = ss.get(f"{W}models_{task}") or []
     parts.append("models " + (", ".join(models) or "(none)"))
     for field in ("folds", "test_share", "num_missing", "cat_missing",
-                  "scale", "cat_encoding", "tune_mode", "balance"):
+                  "scale", "cat_encoding", "tune_mode", "balance",
+                  "balance_rare", "split", "time_col", "cap", "rare_share",
+                  "missing_flags", "select", "log_target", "resample",
+                  "calibration", "stack"):
         if f"{W}{field}" in ss:
             parts.append(f"{field} {ss[f'{W}{field}']}")
     metric = [f"{k[len(W) + 7:]}={ss[k]}" for k in ss.keys()
@@ -143,7 +188,9 @@ def _assignments(p, df, prof):
                     if want in (k, ml.metric_label(family, k).lower())),
                    None)
         if hit:
+            # A file with a rare class keeps its own metric widget.
             out[f"{W}metric_{family}"] = hit
+            out[f"{W}metric_{family}_rare"] = hit
         else:
             notes.append(f"Metric {p['metric']} does not apply to {family}.")
     if p.get("folds"):
@@ -161,21 +208,32 @@ def _assignments(p, df, prof):
             pass
     if task == "classification" and p.get("balance_classes") in ("yes",
                                                                  "no"):
-        out[f"{W}balance"] = p["balance_classes"] == "yes"
-    for field, options in (("num_missing", ml_config.NUM_MISSING),
-                           ("cat_missing", ml_config.CAT_MISSING),
-                           ("scale", ml_config.SCALING),
-                           ("cat_encoding", ml_config.ENCODING),
-                           ("tune_mode", ml_config.TUNING)):
+        out[f"{W}balance"] = out[f"{W}balance_rare"] = \
+            p["balance_classes"] == "yes"
+    for field, (widget, options, tasks) in CHOICES.items():
         value = p.get(field)
         if not value:
             continue
-        if value in options and not (field == "cat_encoding"
-                                     and task == "clustering"
-                                     and value == "target"):
-            out[f"{W}{field}"] = value
-        else:
+        hit = _option(value, options)
+        if hit is _NO or (field == "cat_encoding" and task == "clustering"
+                          and hit == "target"):
             notes.append(f"{field} {value} is not an option here.")
+        elif task not in tasks:
+            notes.append(f"{field} does not apply to {task}.")
+        else:
+            out[f"{W}{widget}"] = hit
+    for field, (widget, tasks) in YES_NO.items():
+        if p.get(field) in ("yes", "no") and task in tasks:
+            out[f"{W}{widget}"] = p[field] == "yes"
+    if out.get(f"{W}split") == "time":
+        col = p.get("time_column")
+        times = [c for c, t, k in zip(prof["column"], prof["type"],
+                                      prof["kind"])
+                 if c != target and (k == "date" or t == "numeric")]
+        if col in times:
+            out[f"{W}time_col"] = col
+        elif col:
+            notes.append(f"{col} cannot be the time column.")
     return out, notes
 
 
@@ -206,7 +264,15 @@ def _describe(p):
              ("balance_classes", "Balance classes"),
              ("num_missing", "Missing numbers"),
              ("cat_missing", "Missing categories"), ("scale", "Scaling"),
-             ("cat_encoding", "Encoding"), ("tune_mode", "Tuning")]
+             ("cat_encoding", "Encoding"), ("tune_mode", "Tuning"),
+             ("split", "Split"), ("time_column", "Time column"),
+             ("cap", "Cap extreme numbers"),
+             ("rare_share", "Group rare categories below"),
+             ("missing_flags", "Flag numeric gaps"),
+             ("feature_select", "Keep the strongest columns"),
+             ("log_target", "Target on a log scale"),
+             ("resample", "Resample"), ("calibration", "Calibrate"),
+             ("stack", "Stack the best")]
     for field, label in pairs:
         if p.get(field):
             lines.append(f"{label}: {p[field]}")
