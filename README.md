@@ -43,9 +43,13 @@ opened yet (Results before training). Click a step to go to it.
    - **Assistant**: describe the objective in plain words ("the retention
      team can call 10% of customers; find the ones most likely to leave").
      It recommends the task, target, models and their settings, the metric
-     to judge them by, validation, class balancing, preparation and
-     encoding, with its reasons — and applies them with one click. Every
-     value is checked against the page's options first.
+     to judge them by, validation (including a split by time), class
+     balancing and resampling, preparation and encoding (fills, caps, rare
+     categories, gap flags, feature selection, a log-scale target), tuning
+     (grid, random or Bayesian), stacking and calibration, with its
+     reasons — and applies them with one click. Every value is checked
+     against the page's options first; anything that does not fit is
+     listed, not applied.
    - Choose the task (classification, regression, clustering), the target,
      the features and the models; preparation (missing values, including
      an **iterative fill** that predicts each gap from the row's other
