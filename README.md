@@ -18,8 +18,11 @@ opened yet (Results before training). Click a step to go to it.
 
 1. **Data** — upload a file, load a Snowflake table or query, or try the
    sample (below).
-2. **Explore & prepare** (EDA) — overview, columns, distributions, gaps,
-   correlations, target and outliers; preparation steps (drop duplicates or
+2. **Explore & prepare** (EDA) — overview with a **data-quality score**
+   (0–100 from filled cells, unique rows, usable columns and values within
+   3 × IQR of the quartiles, each check shown with its points), columns,
+   distributions, gaps, correlations, target and outliers; preparation
+   steps (drop duplicates or
    missing rows, keep a range or values, log / square-root transforms,
    binning, past values of a column for forecasting) that are replayed in
    the exported script.
@@ -44,9 +47,12 @@ opened yet (Results before training). Click a step to go to it.
      encoding, with its reasons — and applies them with one click. Every
      value is checked against the page's options first.
    - Choose the task (classification, regression, clustering), the target,
-     the features and the models; preparation (missing values, scaling,
-     **categorical encoding: one-hot, ordinal or target encoding**, rare
-     categories); split, cross-validation, class balancing and
+     the features and the models; preparation (missing values, including
+     an **iterative fill** that predicts each gap from the row's other
+     numbers, scaling, **categorical encoding: one-hot, ordinal or target
+     encoding**, rare categories, and **feature selection**: keep the 10–50
+     prepared columns a quick extra-trees model ranks highest, chosen again
+     on the training rows of every fit); split, cross-validation, class balancing and
      hyperparameter search. Leakage checks flag columns that predict the
      target almost on their own.
 5. **Results** — leaderboard against a feature-blind baseline, metrics,

@@ -28,6 +28,7 @@ from sklearn.ensemble import (ExtraTreesClassifier, ExtraTreesRegressor,
                               HistGradientBoostingRegressor,
                               RandomForestClassifier, RandomForestRegressor,
                               StackingClassifier, StackingRegressor)
+from sklearn.feature_selection import SelectFromModel
 from sklearn.impute import MissingIndicator, SimpleImputer
 from sklearn.linear_model import (ElasticNet, Lasso, LinearRegression,
                                   LogisticRegression, Ridge)
@@ -222,7 +223,11 @@ def encoding(recipe):
 def native_categories(recipe):
     """Gradient boosting reads categories itself unless they arrive target
     encoded, as numbers."""
-    return recipe["model"] in NATIVE_CATEGORIES and encoding(recipe) != "target"
+    # With a selection step in front, the model no longer sees the
+    # categories in the positions it would be told they are.
+    return (recipe["model"] in NATIVE_CATEGORIES
+            and encoding(recipe) != "target"
+            and not recipe["prep"].get("select"))
 
 
 def with_caps(recipe, X):
@@ -374,7 +379,15 @@ def build_preprocessor(recipe):
                 np.clip, feature_names_out="one-to-one",
                 kw_args={"a_min": np.asarray(caps["low"]),
                          "a_max": np.asarray(caps["high"])})))
-        if how != "none":
+        if how == "iterative":
+            # A writable copy, gaps kept: scikit-learn's IterativeImputer
+            # writes into its input, which a pandas frame hands over
+            # read-only.
+            steps.append(("copy", FunctionTransformer(
+                np.array, feature_names_out="one-to-one")))
+            steps.append(("impute", _iterative(recipe.get("seed", 0),
+                                               flags)))
+        elif how != "none":
             steps.append(("impute", SimpleImputer(
                 strategy="constant" if how == "zero" else how,
                 fill_value=0 if how == "zero" else None,
@@ -394,6 +407,31 @@ def build_preprocessor(recipe):
             parts.append(("gaps", MissingIndicator(error_on_new=False),
                           numeric))
     return ColumnTransformer(parts, sparse_threshold=0.0)
+
+
+def _iterative(seed, flags):
+    """Each numeric gap predicted from the row's other numbers, in rounds
+    (MICE-style), learnt from the rows each fit sees."""
+    # scikit-learn still ships IterativeImputer as experimental.
+    importlib.import_module("sklearn.experimental.enable_iterative_imputer")
+    from sklearn.impute import IterativeImputer
+    return IterativeImputer(max_iter=10, random_state=seed,
+                            add_indicator=flags, keep_empty_features=True)
+
+
+SELECT_TREES = 50
+
+
+def _selector(recipe, k):
+    """The k prepared columns a quick extra-trees model leans on most,
+    chosen again on the training rows of every fit, so no test row helps
+    choose them. A file with fewer columns keeps them all."""
+    cls = (ExtraTreesClassifier if recipe["task"] == "classification"
+           else ExtraTreesRegressor)
+    return SelectFromModel(
+        cls(n_estimators=SELECT_TREES, max_depth=8, n_jobs=-1,
+            random_state=recipe.get("seed", 0)),
+        max_features=int(k), threshold=-np.inf)
 
 
 STACK = "stack"
@@ -439,9 +477,12 @@ def build_estimator(recipe):
 
 
 def build_pipeline(recipe):
-    """preprocessing -> (principal components) -> model, unfitted."""
+    """preprocessing -> (selection | principal components) -> model,
+    unfitted."""
     steps = [("prep", build_preprocessor(recipe))]
     prep = recipe["prep"]
+    if recipe["task"] != "clustering" and prep.get("select"):
+        steps.append(("select", _selector(recipe, prep["select"])))
     if recipe["task"] == "clustering" and prep.get("pca"):
         steps.append(("pca", PCA(n_components=int(prep["pca"]),
                                  random_state=recipe.get("seed", 0))))

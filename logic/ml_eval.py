@@ -503,6 +503,9 @@ def feature_map(pipe, recipe) -> list:
                 out += [cols[i] for i in imp.indicator_.features_]
         elif name == "gaps":
             out += [cols[i] for i in trans.features_]
+    select = pipe.named_steps.get("select")
+    if select is not None:
+        out = [c for c, keep in zip(out, select.get_support()) if keep]
     return out
 
 
@@ -949,7 +952,8 @@ def model_card(run, res) -> str:
     lines += ["", "## Preparation", ""]
     prep = base["prep"]
     filled = {"none": "left missing", "median": "median", "mean": "mean",
-              "zero": "zero", "most_frequent": "most frequent"}
+              "zero": "zero", "most_frequent": "most frequent",
+              "iterative": "predicted from the other numbers (iterative)"}
     lines += [f"- Missing numbers: "
               f"{filled.get(prep.get('num_missing', 'none'), 'left missing')}"
               + (", with a flag column per gap"
@@ -970,6 +974,10 @@ def model_card(run, res) -> str:
                      f"{'yes' if prep.get('log_target') else 'no'}")
     if task == "clustering" and prep.get("pca"):
         lines.append(f"- Principal components: {prep['pca']}")
+    if task != "clustering" and prep.get("select"):
+        lines.append(f"- Feature selection: the {prep['select']} prepared "
+                     f"columns an extra-trees model leans on most, chosen "
+                     f"from the training rows of each fit")
     if task != "clustering":
         val = base["validation"]
         lines += ["", "## Validation", "",

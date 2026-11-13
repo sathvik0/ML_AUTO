@@ -134,6 +134,7 @@ def _overview(df, prof):
     st.caption(f"Gaps are {o['gap_share']:.1%} of cells. A gap is an empty "
                f"cell, or an infinite number, which every model reads as "
                f"empty too. In memory: {o['memory_mb']:,.1f} MB.")
+    _quality(df, prof, o)
     st.markdown("**First rows**")
     st.dataframe(df.head(PREVIEW_ROWS), width="stretch", height=280)
     st.caption(f"The first {min(PREVIEW_ROWS, len(df)):,} of {len(df):,} "
@@ -148,6 +149,33 @@ def _overview(df, prof):
           "use": shell.status("Used", "good") if r["use"] else
           shell.status(KIND_WORD.get(r["kind"], "Off"), "idle"),
           "note": r["note"]} for r in prof.to_dict("records")])
+
+
+QUALITY_WORD = {"filled": "Filled cells", "unique": "Unique rows",
+                "columns": "Usable columns",
+                "extremes": "Values within range"}
+GRADE = {"good": ("Good", "good"), "fair": ("Fair", "warn"),
+         "poor": ("Poor", "bad")}
+
+
+def _quality(df, prof, o):
+    q = _cached("quality", ml_explore.quality, df, prof, o)
+    word, tone = GRADE[q["grade"]]
+    st.markdown(f"**Data quality: {q['score']} / 100** "
+                + shell.status(word, tone), unsafe_allow_html=True)
+    shell.table(
+        [("Check", "check"), ("Finding", "finding"),
+         ("Points", "points", "num")],
+        [{"check": QUALITY_WORD[c["check"]], "finding": c["finding"],
+          "points": f"{c['points']:.1f} / {c['max']}"} for c in q["checks"]])
+    full = {n: f for n, _, f in ml_explore.QUALITY}
+    st.caption(f"Each check loses points in proportion to its failures, and "
+               f"all of them at {full['filled']:.0%} gaps, "
+               f"{full['unique']:.0%} duplicate rows, {full['columns']:.0%} "
+               f"of columns carrying nothing or {full['extremes']:.0%} "
+               f"extreme values. Identifiers, dates and postal codes are not "
+               f"counted against the file: they are used differently, not "
+               f"wasted.")
 
 
 def _columns_tab(df, prof):
