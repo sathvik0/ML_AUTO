@@ -21,7 +21,8 @@ opened yet (Results before training). Click a step to go to it.
 2. **Explore & prepare** (EDA) — overview, columns, distributions, gaps,
    correlations, target and outliers; preparation steps (drop duplicates or
    missing rows, keep a range or values, log / square-root transforms,
-   binning) that are replayed in the exported script.
+   binning, past values of a column for forecasting) that are replayed in
+   the exported script.
 3. **Feature engineering** (AI-assisted)
    - **AI feature ideas**: pick the target; Claude reads the columns and how
      strongly each already relates to it, and proposes new features as
@@ -100,6 +101,33 @@ scores, and late payments newly tied to price rises) — for Drift analysis.
 
 Regenerate both with `python tools/make_sample_data.py` (seeded, so the
 files are identical).
+
+`sample_data/store_sales.csv` ("Try a sales forecast" on the Data page): two
+years of daily sales for eight stores, with a trend, busy weekends, a
+December peak, promotions and holiday closures. Regenerate it with
+`python tools/make_sales_sample.py`.
+
+## Forecasting
+
+A forecast is a regression on past values, checked on later rows:
+
+1. On Explore & prepare, add **Past values of a column**: the column, its
+   time column, one series for each (a store, a product), the values k rows
+   earlier and the mean of the w rows before. Only earlier rows of the same
+   series are read, so a row never sees its own value. Rows are counted,
+   not days; to forecast k periods ahead, use lags of k or more.
+2. On Configure, choose **Split: By time** on the same column, and WAPE
+   (weighted absolute % error: total error over total actuals, which days
+   with zero sales do not blow up) as the metric. Past values of the target
+   used with a random split raise a caution: later rows would train the
+   model.
+3. Results compares the best model with naive forecasts, "the same as k
+   rows earlier", on the same test rows, and warns when the model does not
+   beat them.
+
+A file scored later must include the recent history the past values look
+back on. There is no ARIMA, exponential smoothing or Prophet: the models are
+the same as for any regression.
 
 ## Keys and connections
 
@@ -328,4 +356,5 @@ logic/ml_upload.py         loading, checking and predicting with an uploaded mod
 logic/schema.py            column-type detection
 utils/                     logging, error guard, file loading, secrets, scrolling
 tools/make_sample_data.py  generates the sample datasets
+tools/make_sales_sample.py generates the store sales sample
 ```

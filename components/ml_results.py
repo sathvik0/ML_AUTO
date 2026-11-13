@@ -160,6 +160,44 @@ def _stats(run):
     return kept[run["metric"]]
 
 
+def _naive(run, df):
+    """A forecast against "the same as k rows earlier", on the same rows."""
+    got = ml_stats.naive(run, df)
+    if not got:
+        return
+    name = ml.metric_label(run["family"], run["metric"])
+    up = ml.higher_is_better(run["family"], run["metric"])
+    best = ml.result(run, run["best"])["label"]
+
+    def word(k):
+        return {1: "the last value", 7: "7 rows earlier (a week, daily)",
+                52: "52 rows earlier (a year, weekly)",
+                365: "365 rows earlier (a year, daily)"}.get(
+            k, f"{k} rows earlier")
+
+    st.markdown("**Against a naive forecast**")
+    shell.table(
+        [("Naive forecast", "what"), (name, "naive", "num"),
+         (best, "model", "num"), ("Better by", "skill", "num")],
+        [{"what": word(r["k"]),
+          "naive": ml_eval.fmt_metric(run["metric"], r["naive"]),
+          "model": ml_eval.fmt_metric(run["metric"], r["model"]),
+          "skill": None if r["skill"] is None else
+          (f"{r['skill']:+.3f}" if up else f"{r['skill']:.0%}")}
+         for r in got])
+    worst = min(got, key=lambda r: r["skill"] if r["skill"] is not None
+                else 0)
+    if worst["skill"] is not None and worst["skill"] <= 0:
+        st.warning(f"{best} does not beat {word(worst['k'])} on the test "
+                   f"rows: a forecast that cannot beat a naive one is not "
+                   f"worth deploying yet.")
+    else:
+        st.caption("Each naive forecast copies the target's value from "
+                   "earlier rows of the same series, on the test rows where "
+                   "it exists. \"Better by\" is the share of its error the "
+                   "model removes.")
+
+
 def _sure(run, pair):
     """One line on whether the best model really beats the runner-up."""
     if not pair:
@@ -1407,6 +1445,7 @@ def render():
         st.markdown("#### Leaderboard")
         _leaderboard(run)
         _sure(run, stats[1])
+        _naive(run, df)
     keys = [r["key"] for r in models]
     pick_key = "ml_r_model"
     if pick_key not in ss or ss[pick_key] not in keys:

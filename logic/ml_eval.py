@@ -835,7 +835,7 @@ def fmt_metric(key, value) -> str:
         return "not computed"
     if key in ("rmse", "mae", "medae"):
         return f"{value:,.4g}"
-    if key == "mape":
+    if key in ("mape", "wape"):
         return f"{value:.1f}%"
     if key in ("calinski_harabasz", "inertia", "bic"):
         return f"{value:,.1f}"
@@ -1123,6 +1123,15 @@ SCORING = {"roc_auc": "roc_auc", "roc_auc_ovr": "roc_auc_ovr",
            "r2": "r2", "rmse": "neg_root_mean_squared_error",
            "mae": "neg_mean_absolute_error",
            "mape": "neg_mean_absolute_percentage_error"}
+
+
+def wape(y_true, y_pred):
+    y_true = np.asarray(y_true, dtype=float)
+    return (np.abs(y_true - np.asarray(y_pred, dtype=float)).sum()
+            / max(np.abs(y_true).sum(), 1e-12))
+
+
+SCORING["wape"] = make_scorer(wape, greater_is_better=False)
 CLASSES = []
 
 

@@ -87,7 +87,24 @@ def _later(df, features, time, time_format):
     return out
 
 
-def cautions(df, config):
+def _past_without_time(features, target, val, steps):
+    """Past values of the target used without a time split: a random split
+    puts later rows in training, so a test row's lag is a training row's
+    actual value."""
+    if val.get("time") or not target:
+        return []
+    for s in steps or []:
+        if s["kind"] == "lags" and s["column"] == target and any(
+                f.startswith(f"{target}_lag_") or f.startswith(
+                    f"{target}_mean_") for f in features):
+            return [f"Past values of {target} are features but the split "
+                    f"is random: later rows land in training, which makes "
+                    f"the test look better than a real forecast. Choose "
+                    f"Split: By time on {s['time']}."]
+    return []
+
+
+def cautions(df, config, steps=None):
     """Plain sentences about features that may be recorded after the
     outcome; empty when nothing looks late."""
     if config.get("task") == "clustering":
@@ -96,4 +113,5 @@ def cautions(df, config):
         config.get("categorical") or [])
     val = config.get("validation") or {}
     return (_later(df, features, val.get("time"), val.get("time_format"))
+            + _past_without_time(features, config.get("target"), val, steps)
             + _named(features, config.get("target")))

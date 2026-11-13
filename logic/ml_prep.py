@@ -102,6 +102,39 @@ def date_parts(series, fmt, reference):
             for k, v in parts.items()}
 
 
+def _order_time(series, fmt):
+    """A column as numbers that sort in time order (a date as its
+    nanoseconds, a number as itself)."""
+    if pd.api.types.is_numeric_dtype(series) and not \
+            pd.api.types.is_bool_dtype(series):
+        return _numbers(series)
+    d = _dates(series, fmt)
+    return d.astype("int64").astype("float64").where(d.notna())
+
+
+def past_values(df, step):
+    """{new column: values} for a "lags" step: the column's value k rows
+    earlier in time within each series, and the mean of the w rows before.
+    Only earlier rows are read (shifted by one at least), so a row never
+    sees its own value. Rows are counted, not days: a series with missing
+    days reaches further back."""
+    col, group = step["column"], step.get("group")
+    order = pd.DataFrame({"t": _order_time(df[step["time"]],
+                                           step.get("time_format")),
+                          "v": _numbers(df[col])}, index=df.index)
+    order["g"] = (label_text(df[group]).fillna("(blank)") if group
+                  else "all")
+    order = order.sort_values(["g", "t"], kind="stable")
+    by = order.groupby("g", sort=False)["v"]
+    out = {}
+    for k in step.get("lags") or []:
+        out[f"{col}_lag_{k}"] = by.shift(int(k))
+    for w in step.get("windows") or []:
+        out[f"{col}_mean_{w}"] = by.transform(
+            lambda x, w=int(w): x.shift(1).rolling(w, min_periods=1).mean())
+    return {k: v.reindex(df.index) for k, v in out.items()}
+
+
 def bin_labels(edges):
     """One label per bin; the first and last bins are open-ended, so every
     value in a later file lands in one of them."""
@@ -164,6 +197,12 @@ def apply_step(df, step, n=1, rows=True):
         labels = bin_labels(edges)
         cut = pd.cut(_numbers(df[column]), edges, labels=labels, right=False)
         out[step["into"]] = cut.astype(object).where(cut.notna(), np.nan)
+    elif kind == "lags":
+        _need(df, step["time"], n)
+        if step.get("group"):
+            _need(df, step["group"], n)
+        for name, values in past_values(df, step).items():
+            out[name] = values
     elif kind == "date_parts":
         parts = date_parts(df[column], step.get("format"), step["reference"])
         for part in step["parts"]:
@@ -262,6 +301,12 @@ def describe(step):
     if kind == "bin":
         return (f"{step['into']}: {c} cut into "
                 f"{len(step['edges']) - 1} bins at fixed values")
+    if kind == "lags":
+        parts = ([f"{c}_lag_{k}" for k in step.get("lags") or []]
+                 + [f"{c}_mean_{w}" for w in step.get("windows") or []])
+        return (f"Past values of {c} by {step['time']}"
+                + (f" for each {step['group']}" if step.get("group") else "")
+                + ": " + ", ".join(parts))
     if kind == "date_parts":
         return (f"Date features from {c}: "
                 + ", ".join(f"{c}_{p}" for p in step["parts"])

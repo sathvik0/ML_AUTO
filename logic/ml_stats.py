@@ -26,7 +26,7 @@ def metric(task, key, y, pred, proba, classes, positive):
     """One metric from predictions already made, or None when it cannot be
     computed on these rows (an AUC where one class is missing)."""
     if task == "regression":
-        return ml.regression_metrics(y, pred)[key]
+        return ml.regression_metrics(y, pred)[key]   # WAPE among them
     y = np.asarray(y, dtype=object)
     classes = list(classes)
     if key in ("roc_auc", "average_precision"):
@@ -157,3 +157,45 @@ def segments(run, res, frame, column):
                      "value": value, "gap": gap})
     out = pd.DataFrame(rows)
     return out.sort_values("gap", na_position="last").reset_index(drop=True)
+
+
+def naive(run, df=None):
+    """For a forecast (a regression trained with a time split and past
+    values of its target): each naive forecast, "the value k rows earlier",
+    against the best model on the same test rows. [] otherwise. `df` is
+    the prepared file the run trained on, when the run keeps no `frame`.
+
+    [{"k", "rows", "naive", "model", "skill"}]: the run's metric for each,
+    and how much of the naive forecast's error the model removes (for a
+    lower-is-better metric; for R², the gain)."""
+    frame = run["frame"] if run.get("frame") is not None else df
+    if run["task"] != "regression" or not run.get("time_split") \
+            or frame is None or not run.get("best"):
+        return []
+    target, key = run.get("target"), run["metric"]
+    lags = sorted({int(k) for s in run.get("prep_steps") or []
+                   if s["kind"] == "lags" and s["column"] == target
+                   for k in s.get("lags") or []})
+    pos, y = _test(run)
+    best = ml.result(run, run["best"])
+    up = ml.higher_is_better(run["family"], key)
+    out = []
+    for k in lags:
+        col = f"{target}_lag_{k}"
+        if col not in frame.columns:
+            continue
+        guess = pd.to_numeric(frame[col], errors="coerce") \
+            .to_numpy(dtype="float64")[pos]
+        ok = np.isfinite(guess) & np.isfinite(np.asarray(y, dtype="float64"))
+        if ok.sum() < MIN_SEGMENT:
+            continue
+        yy = np.asarray(y, dtype="float64")[ok]
+        n_val = ml.regression_metrics(yy, guess[ok])[key]
+        m_val = ml.regression_metrics(yy, best["pred"][pos][ok])[key]
+        if n_val is None or m_val is None:
+            continue
+        skill = ((m_val - n_val) if up else
+                 (1 - m_val / n_val) if n_val else None)
+        out.append({"k": k, "rows": int(ok.sum()), "naive": float(n_val),
+                    "model": float(m_val), "skill": skill})
+    return out

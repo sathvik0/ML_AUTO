@@ -42,6 +42,7 @@ KINDS = {
     "as_number": "Read text as numbers",
     "fill": "Fill gaps",
     "date_parts": "Turn dates into numbers",
+    "lags": "Past values of a column (forecasting)",
 }
 
 
@@ -683,7 +684,57 @@ def _builder(df, prof):
             return None, ("No date columns left. A column whose values read "
                           "as dates (2024-03-31, 31/03/2024) shows here.")
         return ml_prep.date_step(df, col)
+    if kind == "lags":
+        return _lags_builder(df, prof, numeric, pick)
     return None, "Choose a step."
+
+
+LAGS = (1, 2, 3, 7, 14, 28, 30, 52, 365)
+WINDOWS = (3, 7, 14, 28, 30)
+
+
+def _lags_builder(df, prof, numeric, pick):
+    """Past values of a number by a time column, per series."""
+    col = pick("Column (what will be forecast)", numeric, "lag_col")
+    if col is None:
+        return None, "The file has no numeric columns."
+    times = [c for c in prof.loc[prof["kind"] == "date", "column"]
+             if c in df.columns] + [c for c in numeric if c != col]
+    time = pick("Time column", times, "lag_time")
+    if time is None:
+        return None, "The file has no date (or time-counting) column."
+    groups = [c for c, t, u in zip(prof["column"], prof["type"],
+                                   prof["unique"])
+              if t == "categorical" and 2 <= u <= 5_000 and c != time]
+    g_key = f"{PREFIX}lag_group"
+    _seed(g_key, "(one series)", ["(one series)"] + groups)
+    group = st.selectbox("One series for each", ["(one series)"] + groups,
+                         key=g_key, help="A store, a product: past values "
+                         "are taken within each.")
+    c1, c2 = st.columns(2)
+    l_key, w_key = f"{PREFIX}lag_ks", f"{PREFIX}lag_ws"
+    if l_key not in st.session_state:
+        st.session_state[l_key] = [1, 7]
+    if w_key not in st.session_state:
+        st.session_state[w_key] = [7]
+    lags = c1.multiselect("Values this many rows earlier", LAGS, key=l_key)
+    windows = c2.multiselect("Mean of the rows before, over", WINDOWS,
+                             key=w_key)
+    if not lags and not windows:
+        return None, "Choose at least one lag or window."
+    st.caption("Rows are counted within each series in time order, so "
+               "daily data with no missing days reads 7 as a week ago. "
+               "Only earlier rows are read: a row never sees its own value. "
+               "To forecast k periods ahead, use lags of k or more. Train "
+               "with Split: By time on the same time column. A file scored "
+               "later must include the recent history these look back on.")
+    step = {"kind": "lags", "column": col, "time": time,
+            "group": None if group == "(one series)" else group,
+            "lags": sorted(int(k) for k in lags),
+            "windows": sorted(int(w) for w in windows),
+            "time_format": None if time in numeric
+            else ml_prep.date_format(df[time])}
+    return step, None
 
 
 def _dates_left(df, prof):
