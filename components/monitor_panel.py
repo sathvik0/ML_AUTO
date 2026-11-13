@@ -52,7 +52,8 @@ def _monitor(p, user, m, editor):
                 if m["schedule"] and m["enabled"]
                 else "paused" if m["schedule"] else "on demand")
         c1.markdown(f"**{m['name']}** {_chip(m['last_status'])} — "
-                    f"{m['model_name']} (production)",
+                    f"{m['model_name']} (production) · "
+                    f"{_describe(m['source'])}",
                     unsafe_allow_html=True)
         c2.caption(f"{m['schedule'] or 'manual'} · {when} · "
                    f"{'retrains to staging' if m['retrain'] == 'staging' else 'alerts only'}"
@@ -108,16 +109,76 @@ def _monitor(p, user, m, editor):
                     st.column_config.NumberColumn(format="%.3f")})
 
 
+WINDOWS = {7: "7 days", 30: "30 days", 90: "90 days"}
+
+
+def _describe(source):
+    kind = source.get("type")
+    if kind == "logged":
+        return (f"API requests, last {source.get('days', 30)} days"
+                + (f", outcomes joined on {source['outcomes']['id']}"
+                   if source.get("outcomes") else ""))
+    return {"dataset": "the project's dataset", "file": "a stored file",
+            "snowflake": "a Snowflake query"}.get(kind, kind)
+
+
+def _source(p, user):
+    """(source spec or None, ready) for a monitor: the requests the model
+    API answered, or newer rows from where a batch job reads them."""
+    live = st.radio("Newer rows to compare with the training data",
+                    ["logged", "rows"], horizontal=True, key="mon_kind",
+                    format_func={"logged": "Requests to the model API",
+                                 "rows": "A dataset, file or query"}.get)
+    if live == "rows":
+        got = deploy_panel.source_input(p, user, "mon", "From")
+        st.caption("Include the actual outcome column when you have it, "
+                   "and accuracy is checked too.")
+        return got
+    c1, c2 = st.columns([1, 2])
+    days = c1.selectbox("Requests from the last", list(WINDOWS),
+                        index=1, format_func=WINDOWS.get, key="mon_days")
+    c2.caption("The rows other systems sent to the model API (Recent "
+               "predictions), so drift is measured on what the model "
+               "actually scores.")
+    source = {"type": "logged", "days": int(days)}
+    if not st.checkbox("Join the actual outcomes as they arrive",
+                       key="mon_join"):
+        return source, True
+    key = st.text_input("ID column, in the requests and the outcomes",
+                        key="mon_join_id", placeholder="Customer_ID")
+    got, ready = deploy_panel.source_input(
+        p, user, "mon_out", "Outcomes: the ID and the target column")
+    st.caption("Each ID's latest request is matched to its outcome; "
+               "accuracy is measured on the matched rows, against the "
+               "model's test score. The outcome column must have the "
+               "target's name.")
+    if got is None or not key.strip():
+        return None, False
+    source["outcomes"] = {"source": got, "id": key.strip()}
+    return source, ready
+
+
+def _stored(p, user, source):
+    """The spec to save, with any uploaded file stored first."""
+    if source["type"] != "logged":
+        return deploy_panel.stored_source(p, user, "mon", source)
+    if source.get("outcomes"):
+        got = deploy_panel.stored_source(p, user, "mon_out",
+                                         source["outcomes"]["source"])
+        if got is None:
+            return None
+        source = {**source, "outcomes": {**source["outcomes"],
+                                         "source": got}}
+    return source
+
+
 def _new_monitor(p, user, names):
     with st.expander("New monitor"):
         name = st.text_input("Monitor name", key="mon_name",
                              placeholder="e.g. Weekly churn check")
         model = st.selectbox("Model (its production version is checked)",
                              names, key="mon_model")
-        source, ready = deploy_panel.source_input(
-            p, user, "mon", "Newer rows to compare with the training data")
-        st.caption("Include the actual outcome column when you have it, "
-                   "and accuracy is checked too.")
+        source, ready = _source(p, user)
         schedule = deploy_panel.schedule_input("mon")
         st.markdown("**Alert when**")
         d = monitoring.DEFAULTS
@@ -161,7 +222,7 @@ def _new_monitor(p, user, names):
         if st.button("Create monitor", type="primary", key="mon_go",
                      disabled=not (name.strip() and model and ready)
                      or bool(problem)):
-            source = deploy_panel.stored_source(p, user, "mon", source)
+            source = _stored(p, user, source)
             if source is None:
                 return
             monitoring.create_monitor(

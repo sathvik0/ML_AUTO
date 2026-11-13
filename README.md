@@ -212,6 +212,17 @@ Snowflake query — on demand or on a schedule:
 - **Accuracy**, when the newer rows include the actual outcome: the model's
   metric on them against its score at training.
 
+The newer rows are a dataset, a file or a Snowflake query, or **the
+requests the model API answered** in the last 7, 30 or 90 days, so drift is
+measured on what the model actually scores. With an ID column (a customer
+id the callers send), the actual outcomes can be joined as they arrive,
+from a file, the project's dataset or a query: each ID's latest request is
+matched to its outcome and accuracy is measured on the matched rows.
+
+The requests are kept as long as the project's owners choose (Project
+settings: 30 days to two years, or for good; a year by default), and the
+scheduled runner deletes older ones, rows included.
+
 Each check ends **ok**, **warning** or **alert** by the monitor's
 thresholds, and the trend is charted over time. Alerts go to the
 deployment's alert topic (email, or Slack/Teams via AWS Chatbot) and, if

@@ -578,6 +578,21 @@ def _settings(p, user):
     if p["role"] != "owner":
         return
     with st.expander("Project settings"):
+        from logic import prediction_log
+        keep = prediction_log.retention(p["id"])
+        options = list(prediction_log.RETENTION)
+        label = {d: "For good" if d is None else f"{d} days"
+                 for d in options}
+        c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+        days = c1.selectbox("Keep the model API's requests for", options,
+                            index=options.index(keep), format_func=label.get,
+                            key="proj_log_days",
+                            help="Older requests, their rows included, are "
+                                 "deleted by the scheduled runner.")
+        if c2.button("Save", key="proj_log_days_go", disabled=days == keep):
+            prediction_log.set_retention(user, p["id"], days)
+            st.rerun()
+        st.divider()
         name = st.text_input("Name", value=p["name"], key="proj_rename")
         if st.button("Rename", key="proj_rename_go",
                      disabled=name.strip() in ("", p["name"])):
