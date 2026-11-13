@@ -943,6 +943,9 @@ def model_card(run, res) -> str:
         lines += ["", "## Steps applied to the file first", ""] + [
             f"- {n}. {ml_prep.describe(step)}"
             for n, step in enumerate(steps, 1)]
+        if run.get("prep_learnt"):
+            lines.append("- Fills, caps and bands were worked out from the "
+                         "training rows only.")
     lines += ["", "## Preparation", ""]
     prep = base["prep"]
     filled = {"none": "left missing", "median": "median", "mean": "mean",
