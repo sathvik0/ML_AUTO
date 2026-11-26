@@ -32,8 +32,16 @@ jobs:
       - run: pip install --require-hashes -r infra/requirements.lock
       - name: Deploy the web tier
         working-directory: infra
+        # Who gets model alerts and ops alarms (and the budget alert), and
+        # the monthly budget: through the environment, never into the script.
+        env:
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          OPS_EMAIL: ${{ vars.OPS_EMAIL }}
+          MONTHLY_BUDGET: ${{ vars.MONTHLY_BUDGET }}
         run: |
           npx --yes aws-cdk@2 deploy MlAutoWeb --require-approval never \
             -c domainName=${{ vars.DOMAIN_NAME }} \
             -c hostedZoneName=${{ vars.HOSTED_ZONE_NAME }} \
-            -c cognitoDomain=${{ vars.COGNITO_DOMAIN }}
+            -c cognitoDomain=${{ vars.COGNITO_DOMAIN }} \
+            -c "alertEmail=$ALERT_EMAIL" -c "opsEmail=$OPS_EMAIL" \
+            -c "monthlyBudget=${MONTHLY_BUDGET:-300}"

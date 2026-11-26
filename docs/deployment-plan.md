@@ -114,7 +114,9 @@ Times are hands-on time. 💲 marks the step that starts billing.
 7. Repository → Settings → Environments → create `production`, with
    yourself as required reviewer.
 8. Repository variables: `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION`, `DOMAIN_NAME`,
-   `HOSTED_ZONE_NAME`, `COGNITO_DOMAIN`.
+   `HOSTED_ZONE_NAME`, `COGNITO_DOMAIN`, `ALERT_EMAIL` (model alerts),
+   `OPS_EMAIL` (ops alarms and the budget alert) and `MONTHLY_BUDGET`
+   (US dollars; 300 when unset).
 
 **Phase 4 — 💲 first deploy (GitHub Actions, ~20–30 minutes)**
 9. Actions → Deploy → Run workflow on `main`; approve it. GitHub builds the
