@@ -115,7 +115,9 @@ viewer. What each may do is in `utils/auth.py`.
 
 In the repository's **Settings → Secrets and variables → Actions →
 Variables**, add `AWS_DEPLOY_ROLE_ARN` (from step 2), `AWS_REGION`,
-`DOMAIN_NAME`, `HOSTED_ZONE_NAME`, `COGNITO_DOMAIN`. Create an environment
+`DOMAIN_NAME`, `HOSTED_ZONE_NAME`, `COGNITO_DOMAIN`, `ALERT_EMAIL` (model
+alerts), `OPS_EMAIL` (ops alarms and the budget alert) and `MONTHLY_BUDGET`
+(US dollars; 300 when unset). Create an environment
 named `production` (add required reviewers to gate deploys). Then run
 **Actions → Deploy → Run workflow** on `main`.
 
