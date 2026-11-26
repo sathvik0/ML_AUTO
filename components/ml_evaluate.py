@@ -187,51 +187,62 @@ def render():
         st.info("Model upload is turned off on this deployment "
                 "(ML_MODEL_UPLOAD=off).")
         return
-    st.caption("Accepted: this app's model file (.joblib), a scikit-learn, "
-               "XGBoost or LightGBM model saved with joblib or pickle, an "
-               "XGBoost .json or .ubj model, or a LightGBM .txt model. A "
-               "joblib or pickle file can run code as it loads, so it is "
-               "read through an allow-list: only model parts are built, and "
-               "the load stops at anything else before it runs. The .json, "
-               ".ubj and .txt formats run nothing.")
-    upload = st.file_uploader("Model file", type=[e.lstrip(".") for e in
-                                                  ml_upload.EXTENSIONS],
-                              key=f"{PREFIX}file")
-    if upload is None:
-        return
-    info, why = _read(upload)
-    if why:
-        st.warning(why)
-        return
-    _found(info)
-    df, why = _frame(info, df)
-    if why:
-        st.warning(why)
-        return
+    with st.container(border=True, key="card_own_model"):
+        st.markdown("#### 1. The model")
+        st.caption("Accepted: this app's model file (.joblib), a "
+                   "scikit-learn, XGBoost or LightGBM model saved with joblib "
+                   "or pickle, an XGBoost .json or .ubj model, or a LightGBM "
+                   ".txt model. A joblib or pickle file can run code as it "
+                   "loads, so it is read through an allow-list: only model "
+                   "parts are built, and the load stops at anything else "
+                   "before it runs. The .json, .ubj and .txt formats run "
+                   "nothing.")
+        upload = st.file_uploader("Model file", type=[
+            e.lstrip(".") for e in ml_upload.EXTENSIONS], key=f"{PREFIX}file")
+        if upload is None:
+            return
+        info, why = _read(upload)
+        if why:
+            st.warning(why)
+            return
+        _found(info)
+        df, why = _frame(info, df)
+        if why:
+            st.warning(why)
+            return
     task = info["task"]
-    if info.get("task_guessed"):
-        t_key = f"{PREFIX}task"
-        _seed(t_key, "regression", ["classification", "regression"])
-        task = st.radio("It predicts", ["classification", "regression"],
-                        horizontal=True, key=t_key,
-                        format_func=ml.TASK_LABELS.get)
-    st.markdown("#### Its inputs")
-    mapping, position = _mapping(df, info)
-    m_key = f"{PREFIX}mode"
-    _seed(m_key, "evaluate", ["evaluate", "predict"])
-    mode = st.radio("What to do", ["evaluate", "predict"], key=m_key,
-                    horizontal=True, format_func={
-                        "evaluate": "Evaluate against actual values",
-                        "predict": "Predict (no actual values needed)"}.get)
+    with st.container(border=True, key="card_own_inputs"):
+        st.markdown("#### 2. Its inputs")
+        if info.get("task_guessed"):
+            t_key = f"{PREFIX}task"
+            _seed(t_key, "regression", ["classification", "regression"])
+            task = st.radio("It predicts", ["classification", "regression"],
+                            horizontal=True, key=t_key,
+                            format_func=ml.TASK_LABELS.get)
+        mapping, position = _mapping(df, info)
+        m_key = f"{PREFIX}mode"
+        _seed(m_key, "evaluate", ["evaluate", "predict"])
+        mode = st.radio("What to do", ["evaluate", "predict"], key=m_key,
+                        horizontal=True, format_func={
+                            "evaluate": "Evaluate against actual values",
+                            "predict": "Predict (no actual values needed)"}
+                        .get)
     if mode == "predict":
         if mapping is None:
             st.caption("Match every input to a column first.")
             return
-        _predict(df, info, mapping, task, position)
+        with st.container(border=True, key="card_own_predict"):
+            _predict(df, info, mapping, task, position)
         return
+    with st.container(border=True, key="card_own_evaluate"):
+        _evaluate(df, info, mapping, task, position)
+
+
+def _evaluate(df, info, mapping, task, position):
+    ss = st.session_state
+    st.markdown("#### 3. Evaluate")
     target = positive = None
     if task != "clustering":
-        st.markdown("#### What it predicts")
         target = _target(df, info, task)
         if target is None:
             st.caption("Choose the column holding the actual values: the "
@@ -306,7 +317,7 @@ def _prediction_source(df, info):
 @guard.guarded("Predict")
 def _predict(df, info, mapping, task, position):
     ss = st.session_state
-    st.markdown("#### Predict")
+    st.markdown("#### 3. Predict")
     data, label = _prediction_source(df, info)
     if data is None:
         return

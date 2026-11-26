@@ -518,11 +518,12 @@ def _targeting(run, res, df):
     stats = ml_eval.at_threshold(hit, score, t)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Precision", "n/a" if stats["precision"] is None
-              else f"{stats['precision']:.0%}")
+              else f"{stats['precision']:.0%}", border=True)
     m2.metric("Recall", "n/a" if stats["recall"] is None
-              else f"{stats['recall']:.0%}")
-    m3.metric("F1", "n/a" if stats["f1"] is None else f"{stats['f1']:.3f}")
-    m4.metric("Test rows flagged", f"{stats['flagged']:,}")
+              else f"{stats['recall']:.0%}", border=True)
+    m3.metric("F1", "n/a" if stats["f1"] is None else f"{stats['f1']:.3f}",
+              border=True)
+    m4.metric("Test rows flagged", f"{stats['flagged']:,}", border=True)
     every = ml_eval.positive_score(run, res, slice(None)) >= t
     st.caption(f"Precision: the share of flagged test rows in class "
                f"{run['positive']}. Recall: the share of class "
@@ -1455,18 +1456,25 @@ def render():
                         + ("  (best)" if k == run["best"] else ""))
     res = ml.result(run, pick)
     task = run["task"]
+
+    def panel(name):
+        # Each tab's content on one white panel.
+        return st.container(border=True, key="card_res_" + name.lower()
+                            .replace(" ", "_"))
+
     if task == "clustering":
-        tabs = st.tabs(["Clusters", "Profiles", "Number of clusters",
-                        "Predictions", "Python code"])
-        with tabs[0]:
+        names = ["Clusters", "Profiles", "Number of clusters",
+                 "Predictions", "Python code"]
+        tabs = dict(zip(names, st.tabs(names)))
+        with tabs["Clusters"], panel("Clusters"):
             _clusters(run, res, df)
-        with tabs[1]:
+        with tabs["Profiles"], panel("Profiles"):
             _profiles(run, res, df)
-        with tabs[2]:
+        with tabs["Number of clusters"], panel("Number of clusters"):
             _k_scan(run)
-        with tabs[3]:
+        with tabs["Predictions"], panel("Predictions"):
             _predictions(run, res, df)
-        with tabs[4]:
+        with tabs["Python code"], panel("Python code"):
             _code(run, res)
     else:
         binary = task == "classification" and len(run["classes"]) == 2
@@ -1475,7 +1483,7 @@ def render():
             "Python code"] + (
             ["Tuning"] if res.get("tuned") else [])
         tabs = dict(zip(names, st.tabs(names)))
-        with tabs["Performance"]:
+        with tabs["Performance"], panel("Performance"):
             if task == "regression":
                 _regression_performance(run, res)
             elif binary:
@@ -1483,20 +1491,20 @@ def render():
             else:
                 _multiclass_performance(run, res)
         if binary:
-            with tabs["Targeting"]:
+            with tabs["Targeting"], panel("Targeting"):
                 _targeting(run, res, df)
-        with tabs["Segments"]:
+        with tabs["Segments"], panel("Segments"):
             _segments(run, res, df)
-        with tabs["What drives it"]:
+        with tabs["What drives it"], panel("What drives it"):
             _drivers(run, res, df)
-        with tabs["SHAP"]:
+        with tabs["SHAP"], panel("SHAP"):
             _shap(run, res, df)
-        with tabs["Predictions"]:
+        with tabs["Predictions"], panel("Predictions"):
             _predictions(run, res, df)
-        with tabs["Python code"]:
+        with tabs["Python code"], panel("Python code"):
             _code(run, res)
         if res.get("tuned"):
-            with tabs["Tuning"]:
+            with tabs["Tuning"], panel("Tuning"):
                 st.caption(f"{len(res['search'])} settings compared by "
                            f"cross-validated "
                            f"{ml.metric_label(run['family'], run['metric'])}"
